@@ -104,7 +104,10 @@ echo   First visit = Setup Wizard
 echo   Keep this window OPEN while using the app
 echo   Press Ctrl+C to stop
 echo.
-echo   Android APK? Double-click BUILD-APK.bat
+echo   Android APK for phones:
+echo     Prefer GitHub Releases → FinAgent-android.apk
+echo     ^(no Android Studio^). Or phone browser / PWA.
+echo   Developers: BUILD-APK.bat
 echo   Beginner guide: HOW-TO-USE.md
 echo  ----------------------------------------
 echo.

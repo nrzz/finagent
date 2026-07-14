@@ -19,7 +19,7 @@ Full beginner guide: **[HOW-TO-USE.md](HOW-TO-USE.md)**
 |-------|---------|
 | Website on this PC | `START.bat` → http://127.0.0.1:8000 |
 | Phone (same Wi‑Fi) | Use the **Phone / APK** URL printed by `START.bat` |
-| Android APK | `BUILD-APK.bat` (needs [Android Studio](https://developer.android.com/studio)) |
+| Android APK | Download **FinAgent-android.apk** from the repo **Releases** tab — no Android Studio |
 
 Docker: `docker compose up --build` → http://localhost:8000
 

@@ -61,21 +61,21 @@ Home screen = **Agent chat**. Try chips like “Paper-buy 10 AAPL”.
 
 ---
 
-## 5. Android APK (optional)
+## 5. Android APK (optional — no Android Studio)
 
-Only if you want a real installable app file:
+Most people should use the **phone browser** (section 4) or **Add to Home screen**.
 
-1. Install [Android Studio](https://developer.android.com/studio) once (large download)
-2. Keep FinAgent running with **`START.bat`**
-3. Double-click **`BUILD-APK.bat`**
-4. When Android Studio opens:
-   - Wait for Gradle to finish
-   - **Build → Build Bundle(s) / APK(s) → Build APK(s)**
-   - Click **locate** and copy the `.apk` to your phone
-5. Install the APK → open FinAgent → **Settings → Device / APK**  
-   Set **API server URL** to the Phone address from `START.bat` (e.g. `http://192.168.1.7:8000`) → Save
+If you want an installable APK:
 
-More detail: [`docs/android.md`](docs/android.md)
+1. Keep **`START.bat`** running on the PC and copy the **Phone / APK** URL it shows  
+2. On GitHub, open **Releases** and download **`FinAgent-android.apk`**  
+   (published automatically when maintainers tag a version — see `docs/guides/release.md`)  
+3. Install the APK on your phone  
+4. Open FinAgent → **Settings → Device / APK** → paste the PC URL → **Save**
+
+You do **not** need Android Studio for this.
+
+(Developers only: `BUILD-APK.bat` builds from source.)
 
 ---
 

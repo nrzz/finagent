@@ -5,14 +5,12 @@ cd /d "%~dp0"
 echo.
 echo  ========================================
 echo   FinAgent - Build Android APK
+echo   (Developers / maintainers)
 echo  ========================================
 echo.
-echo  You need:
-echo   1) FinAgent website running (START.bat)
-echo   2) Android Studio (this script can open it)
-echo.
-echo  Tip: On your phone you can also just open
-echo  http://YOUR-PC-IP:8000 in Chrome — no APK needed.
+echo  End users: download FinAgent-android.apk from
+echo  GitHub Releases — no Android Studio needed.
+echo  See HOW-TO-USE.md
 echo.
 
 where node >nul 2>&1
@@ -46,10 +44,16 @@ if not exist "android\gradlew.bat" (
   echo [2/3] Android project already present.
 )
 
-REM Same Android SDK path as open-torrent on this machine (safe to change)
 if not exist "android\local.properties" (
-  echo sdk.dir=D:\\Android\\Sdk> android\local.properties
-  echo Wrote android\local.properties -^> D:\Android\Sdk
+  if exist "D:\Android\Sdk" (
+    echo sdk.dir=D:\\Android\\Sdk> android\local.properties
+    echo Using SDK D:\Android\Sdk
+  ) else if exist "%LOCALAPPDATA%\Android\Sdk" (
+    echo sdk.dir=%LOCALAPPDATA:\=\\%\\Android\\Sdk> android\local.properties
+    echo Using SDK %LOCALAPPDATA%\Android\Sdk
+  ) else (
+    echo [WARN] No Android SDK found. Set sdk.dir in frontend\android\local.properties
+  )
 )
 
 echo Syncing UI into Android app...
@@ -60,34 +64,37 @@ if errorlevel 1 (
   pause
   exit /b 1
 )
+
+echo [3/3] Building release APK with Gradle...
+pushd android
+if defined JAVA_HOME goto :gradle
+if exist "C:\Program Files\Microsoft\jdk-17.0.19.10-hotspot" set "JAVA_HOME=C:\Program Files\Microsoft\jdk-17.0.19.10-hotspot"
+:gradle
+set "ANDROID_HOME=D:\Android\Sdk"
+if not exist "%ANDROID_HOME%" set "ANDROID_HOME=%LOCALAPPDATA%\Android\Sdk"
+call gradlew.bat assembleRelease --no-daemon
+if errorlevel 1 (
+  echo.
+  echo Gradle build failed. Opening Android Studio instead...
+  popd
+  call npx cap open android
+  popd
+  pause
+  exit /b 1
+)
+popd
 popd
 
-echo [3/3] Opening Android Studio...
-echo.
-echo  FIRST TIME ONLY - Android Studio welcome wizard:
-echo   - Click through until it installs the Android SDK
-echo   - Then open this project if it is not already open:
-echo     D:\Projects\finagent\frontend\android
-echo     (or your unzipped path\frontend\android)
-echo.
-echo  THEN BUILD THE APK:
-echo   1. Wait until Gradle finishes syncing (bottom progress bar)
-echo   2. Menu: Build -^> Build Bundle(s) / APK(s) -^> Build APK(s)
-echo   3. When done, click "locate" to find the APK file
-echo   4. Copy that APK to your phone and install it
-echo   5. Open FinAgent on phone -^> Settings -^> Device / APK
-echo      Set server URL to http://YOUR-PC-IP:8000  (see START.bat window)
-echo.
-echo  Emulator tip: use http://10.0.2.2:8000 as the server URL.
-echo.
+if exist "frontend\android\app\build\outputs\apk\release\app-release.apk" (
+  copy /Y "frontend\android\app\build\outputs\apk\release\app-release.apk" "FinAgent-android.apk" >nul
+  echo.
+  echo  SUCCESS — APK ready:
+  echo    %cd%\FinAgent-android.apk
+  echo  Copy to your phone, install, then Settings -^> Device / APK
+  echo  set server URL from START.bat ^(e.g. http://192.168.1.7:8000^)
+  echo.
+) else (
+  echo APK not found after build.
+)
 
-pushd frontend
-call npx cap open android
-popd
-
-echo.
-echo If Android Studio did not open, install it from:
-echo   https://developer.android.com/studio
-echo then run this file again.
-echo.
 pause

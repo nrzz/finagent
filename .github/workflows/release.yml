@@ -3,6 +3,12 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version label for the APK (e.g. 0.1.0)"
+        required: false
+        default: "dev"
 
 permissions:
   contents: write
@@ -14,27 +20,108 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
 
-      - name: Build frontend
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Accept Android licenses
+        run: yes | sdkmanager --licenses || true
+
+      - name: Install Android platform / build-tools
+        run: |
+          sdkmanager "platforms;android-34" "build-tools;34.0.0" "platform-tools"
+
+      - name: Resolve version
+        id: ver
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            V="${GITHUB_REF_NAME#v}"
+          else
+            V="${{ inputs.version || 'dev' }}"
+          fi
+          CODE=$(echo "$V" | awk -F. '{print ($1*10000)+($2*100)+$3}')
+          if ! [[ "$CODE" =~ ^[0-9]+$ ]]; then CODE=1; fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "version_code=$CODE" >> "$GITHUB_OUTPUT"
+
+      - name: Build web UI
         working-directory: frontend
         run: |
           npm ci || npm install
           npm run build
 
+      - name: Capacitor Android project
+        working-directory: frontend
+        run: |
+          if [ ! -f android/gradlew ]; then
+            npx cap add android
+          fi
+          npx cap sync android
+          # LAN HTTP to self-hosted PC (Settings → Device / APK)
+          sed -i 's/android:theme="@style\/AppTheme"/android:usesCleartextTraffic="true"\n        android:theme="@style\/AppTheme"/' \
+            android/app/src/main/AndroidManifest.xml || true
+
+      - name: Patch version + community release signing
+        working-directory: frontend/android
+        env:
+          FINAGENT_VERSION: ${{ steps.ver.outputs.version }}
+          FINAGENT_VERSION_CODE: ${{ steps.ver.outputs.version_code }}
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          import os
+          p = Path("app/build.gradle")
+          t = p.read_text()
+          v = os.environ["FINAGENT_VERSION"]
+          c = os.environ["FINAGENT_VERSION_CODE"]
+          t = t.replace('versionCode 1', f'versionCode {c}', 1)
+          t = t.replace('versionName "1.0"', f'versionName "{v}"', 1)
+          if "signingConfig signingConfigs.debug" not in t:
+              t = t.replace(
+                  "release {\n            minifyEnabled false",
+                  "release {\n            signingConfig signingConfigs.debug\n            minifyEnabled false",
+                  1,
+              )
+          p.write_text(t)
+          print("patched", v, c)
+          PY
+
+      - name: Build release APK
+        working-directory: frontend/android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleRelease --no-daemon
+          mkdir -p ../../dist-mobile
+          cp app/build/outputs/apk/release/app-release.apk \
+            ../../dist-mobile/FinAgent-${{ steps.ver.outputs.version }}.apk
+          cp app/build/outputs/apk/release/app-release.apk \
+            ../../dist-mobile/FinAgent-android.apk
+          ls -lh ../../dist-mobile/
+
       - name: Set up Docker Buildx
+        if: github.ref_type == 'tag'
         uses: docker/setup-buildx-action@v3
 
       - name: Login to GHCR
+        if: github.ref_type == 'tag'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push
+      - name: Build and push Docker image
+        if: github.ref_type == 'tag'
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -43,19 +130,26 @@ jobs:
             ghcr.io/${{ github.repository }}:latest
             ghcr.io/${{ github.repository }}:${{ github.ref_name }}
 
-      - name: Capacitor Android stub APK artifact
-        working-directory: frontend
-        run: |
-          npm install @capacitor/core @capacitor/cli @capacitor/android --save
-          npx cap init FinAgent com.finagent.app --web-dir dist || true
-          mkdir -p ../dist-mobile
-          echo "APK built in full Android CI; see docs/guides/apk.md" > ../dist-mobile/README.txt
-          # Placeholder marker so releases always include mobile docs
-          cp -r dist ../dist-mobile/web || true
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: FinAgent-android
+          path: dist-mobile/*.apk
 
-      - name: GitHub Release
+      - name: GitHub Release (tags only)
+        if: github.ref_type == 'tag'
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
+          body: |
+            ## Install
+
+            1. On a PC, run FinAgent (`START.bat` or Docker) and note the **Phone / APK** URL (e.g. `http://192.168.1.7:8000`).
+            2. Download **FinAgent-android.apk** below (no Android Studio needed).
+            3. Install on your phone → allow unknown apps if asked.
+            4. Open FinAgent → **Settings → Device / APK** → paste that URL → Save.
+
+            **Not financial advice.** Paper trading is the default.
           files: |
-            dist-mobile/README.txt
+            dist-mobile/FinAgent-android.apk
+            dist-mobile/FinAgent-${{ steps.ver.outputs.version }}.apk
