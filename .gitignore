@@ -1,0 +1,53 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+build/
+.venv/
+venv/
+.env
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+*.sqlite3
+*.db
+
+# Node / frontend
+node_modules/
+frontend/dist/
+frontend/dev-dist/
+*.local
+.vite/
+*.tsbuildinfo
+
+# Capacitor / Android
+mobile/android/
+mobile/ios/
+frontend/android/
+frontend/ios/
+*.apk
+*.aab
+*.keystore
+*.jks
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Data / secrets (runtime only — not the Python package backend/src/finagent/data)
+/data/
+secrets/
+*.pem
+/config/config.yaml
+
+# Docs build
+site/
+docs/_build/

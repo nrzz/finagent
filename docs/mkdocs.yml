@@ -1,0 +1,29 @@
+site_name: FinAgent Docs
+site_description: Self-hosted AI finance agent
+repo_url: https://github.com/YOUR_ORG/finagent
+theme:
+  name: material
+  palette:
+    - scheme: slate
+      primary: cyan
+      toggle:
+        icon: material/brightness-4
+nav:
+  - Home: index.md
+  - Guides:
+      - Installation: guides/installation.md
+      - Remote access: guides/remote-access.md
+      - LLM setup: guides/llm-setup.md
+      - Broker plugins: guides/broker-plugins.md
+      - Android APK: guides/apk.md
+  - ADRs:
+      - Index: adr/index.md
+      - 0001 LiteLLM: adr/0001-litellm.md
+      - 0002 Custom agent loop: adr/0002-custom-agent-loop.md
+      - 0003 Decimal money: adr/0003-decimal-money.md
+      - 0004 PWA Capacitor: adr/0004-pwa-capacitor.md
+markdown_extensions:
+  - admonition
+  - tables
+  - toc:
+      permalink: true

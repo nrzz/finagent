@@ -1,0 +1,28 @@
+services:
+  finagent:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      FINAGENT_DATA_DIR: /data
+      FINAGENT_DATABASE_URL: sqlite+aiosqlite:////data/finagent.db
+      FINAGENT_HOST: 0.0.0.0
+      FINAGENT_PORT: 8000
+    volumes:
+      - finagent-data:/data
+    restart: unless-stopped
+
+  # Optional local LLM — uncomment to run Ollama beside the app
+  # ollama:
+  #   image: ollama/ollama:latest
+  #   ports:
+  #     - "11434:11434"
+  #   volumes:
+  #     - ollama:/root/.ollama
+  #   restart: unless-stopped
+
+volumes:
+  finagent-data:
+  # ollama:

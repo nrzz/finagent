@@ -1,0 +1,105 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "finagent"
+version = "0.1.0"
+description = "Self-hosted AI finance agent — stocks, mutual funds, F&O, crypto"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.11"
+authors = [{ name = "FinAgent Contributors" }]
+dependencies = [
+  "fastapi>=0.115.0",
+  "uvicorn[standard]>=0.32.0",
+  "sqlalchemy[asyncio]>=2.0.36",
+  "aiosqlite>=0.20.0",
+  "alembic>=1.14.0",
+  "pydantic>=2.10.0",
+  "pydantic-settings>=2.6.0",
+  "pyyaml>=6.0.2",
+  "python-multipart>=0.0.17",
+  "httpx>=0.28.0",
+  "structlog>=24.4.0",
+  "cryptography>=44.0.0",
+  "passlib[bcrypt]>=1.7.4",
+  "bcrypt>=4.0.1,<4.1",
+  "python-jose[cryptography]>=3.3.0",
+  "apscheduler>=3.10.4",
+  "yfinance>=0.2.50",
+  "ccxt>=4.4.0",
+  "exchange-calendars>=4.5.0",
+  "tenacity>=9.0.0",
+  "cachetools>=5.5.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3.0",
+  "pytest-asyncio>=0.24.0",
+  "pytest-cov>=6.0.0",
+  "hypothesis>=6.119.0",
+  "ruff>=0.8.0",
+  "mypy>=1.13.0",
+  "types-PyYAML>=6.0.12",
+  "types-cachetools>=5.5.0",
+  "httpx>=0.28.0",
+  "pre-commit>=4.0.0",
+]
+
+[project.scripts]
+finagent = "finagent.main:run"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+pythonpath = ["src"]
+markers = [
+  "network: tests that call live market data (may skip offline)",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "N"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+mypy_path = "src"
+packages = ["finagent"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["yfinance.*", "ccxt.*", "exchange_calendars.*", "passlib.*", "jose.*"]
+ignore_missing_imports = true
+
+[tool.coverage.run]
+source = ["finagent"]
+omit = [
+  "*/tests/*",
+  "*/api/*",
+  "*/agent/*",
+  "*/data/*",
+  "*/db/*",
+  "*/brokers/*",
+  "*/scheduler/*",
+  "*/main.py",
+  "*/llm/router.py",
+]
+
+[tool.coverage.report]
+fail_under = 75
+show_missing = true
+# Core money / order / config / paper engine are gated above.
+# Integration surfaces (API, adapters, LLM I/O) covered by CI smoke later.

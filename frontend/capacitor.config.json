@@ -1,0 +1,14 @@
+{
+  "appId": "com.finagent.app",
+  "appName": "FinAgent",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "https",
+    "cleartext": true
+  },
+  "plugins": {
+    "ServerUrl": {
+      "description": "Users set FinAgent backend URL on first launch"
+    }
+  }
+}
