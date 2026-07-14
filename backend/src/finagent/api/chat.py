@@ -8,6 +8,7 @@ from typing import Any
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from finagent.agent import AgentLoop
@@ -21,6 +22,32 @@ router = APIRouter(prefix="/api/chat", tags=["chat"])
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=8000)
     history: list[dict[str, Any]] = Field(default_factory=list)
+
+
+@router.get("/history")
+async def chat_history(
+    limit: int = 100,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    lim = max(1, min(limit, 500))
+    result = await db.execute(
+        select(ChatMessage).order_by(ChatMessage.id.desc()).limit(lim)
+    )
+    rows = list(reversed(result.scalars().all()))
+    return {
+        "messages": [
+            {
+                "id": r.id,
+                "role": r.role,
+                "content": r.content,
+                "tool_calls": r.tool_calls,
+                "citations": r.citations,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in rows
+        ]
+    }
 
 
 @router.post("")

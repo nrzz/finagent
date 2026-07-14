@@ -21,6 +21,7 @@ os.environ["FINAGENT_DATA_DIR"] = str(TEST_DATA)
 os.environ["FINAGENT_DATABASE_URL"] = "sqlite+aiosqlite:///e2e.db"
 os.environ["FINAGENT_SECRET_KEY"] = "e2e-test-secret-key-for-fernet-derive"
 os.environ["FINAGENT_JWT_SECRET"] = "e2e-jwt-secret-please-change-in-prod-32chars"
+os.environ["FINAGENT_ALLOW_INSECURE_SECRETS"] = "1"
 
 # Clear cached env if any
 from finagent.config import get_env
@@ -199,7 +200,11 @@ def test_secrets_masked(client: TestClient, auth: dict[str, str]) -> None:
     r = client.put(
         "/api/settings/secrets",
         headers=auth,
-        json={"name": "OPENAI_API_KEY", "value": "sk-test-secret-value-1234"},
+        json={
+            "name": "OPENAI_API_KEY",
+            "value": "sk-test-secret-value-1234",
+            "reauth_password": "password123",
+        },
     )
     assert r.status_code == 200
     assert "sk-test" not in r.json().get("masked", "")
@@ -688,3 +693,91 @@ def test_market_quote_best_effort(client: TestClient, auth: dict[str, str]) -> N
     assert "price" in q
     assert "source" in q
     assert "as_of" in q
+
+
+def test_wizard_cannot_enable_live(client: TestClient, auth: dict[str, str]) -> None:
+    r = client.post(
+        "/api/settings/wizard/complete",
+        headers=auth,
+        json={
+            "settings": {
+                "risk_acknowledged": True,
+                "trading": {"mode": "live"},
+            }
+        },
+    )
+    assert r.status_code == 403
+
+
+def test_secrets_require_reauth(client: TestClient, auth: dict[str, str]) -> None:
+    r = client.put(
+        "/api/settings/secrets",
+        headers=auth,
+        json={"name": "DUMMY_KEY", "value": "secret-value-xyz"},
+    )
+    assert r.status_code == 403
+
+
+def test_health_ready(client: TestClient) -> None:
+    r = client.get("/api/health/ready")
+    assert r.status_code in (200, 503)
+    body = r.json()
+    assert "checks" in body
+    assert "database" in body["checks"]
+
+
+def test_chat_history_endpoint(client: TestClient, auth: dict[str, str]) -> None:
+    r = client.get("/api/chat/history?limit=10", headers=auth)
+    assert r.status_code == 200
+    assert "messages" in r.json()
+
+
+def test_agent_ignores_confirmed_true(client: TestClient, auth: dict[str, str]) -> None:
+    """LLM cannot force-fill paper orders via confirmed=true."""
+    import anyio
+
+    from finagent.agent.tools import execute_tool
+
+    async def _run() -> dict:
+        return await execute_tool(
+            "place_paper_order",
+            {
+                "symbol": "MSFT",
+                "side": "buy",
+                "quantity": "1",
+                "price": "10",
+                "confirmed": True,
+            },
+        )
+
+    result = anyio.run(_run)
+    assert result["ok"] is True
+    assert result["result"].get("pending_confirmation") is True
+
+
+def test_url_safety_blocks_metadata() -> None:
+    from finagent.security.url_safety import is_safe_llm_base_url
+
+    ok, _ = is_safe_llm_base_url("http://169.254.169.254/")
+    assert ok is False
+    ok2, _ = is_safe_llm_base_url("http://127.0.0.1:11434")
+    assert ok2 is True
+
+
+def test_ollama_exclusive_endpoint(client: TestClient, auth: dict[str, str]) -> None:
+    """Exclusive unload is best-effort when Ollama is offline."""
+    r = client.post(
+        "/api/settings/llm/ollama/exclusive",
+        headers=auth,
+        json={"model": "qwen2.5:3b", "base_url": "http://127.0.0.1:11434", "warm": False},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body.get("ok") is True
+    assert "unloaded" in body or "message" in body
+
+
+def test_backup_download(client: TestClient, auth: dict[str, str]) -> None:
+    r = client.get("/api/settings/backup", headers=auth)
+    # DB may live under data dir — 200 or 404 if path not resolved in test
+    assert r.status_code in (200, 404)

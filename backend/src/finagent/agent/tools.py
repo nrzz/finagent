@@ -92,10 +92,6 @@ TOOLS_SCHEMA: list[dict[str, Any]] = [
                     "price": {"type": "string"},
                     "asset_class": {"type": "string"},
                     "idempotency_key": {"type": "string"},
-                    "confirmed": {
-                        "type": "boolean",
-                        "description": "Must stay false unless the user already confirmed in the UI",
-                    },
                 },
                 "required": ["symbol", "side", "quantity", "price"],
             },
@@ -129,7 +125,29 @@ TOOLS_SCHEMA: list[dict[str, Any]] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "create_alert",
+            "description": "Create a price alert (above/below threshold)",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "symbol": {"type": "string"},
+                    "condition": {"type": "string", "enum": ["above", "below"]},
+                    "threshold": {"type": "string"},
+                },
+                "required": ["symbol", "condition", "threshold"],
+            },
+        },
+    },
 ]
+
+
+class CreateAlertArgs(BaseModel):
+    symbol: str = Field(min_length=1, max_length=32)
+    condition: str
+    threshold: str
 
 
 async def _get_quote(args: dict[str, Any]) -> dict[str, Any]:
@@ -165,7 +183,7 @@ async def _get_portfolio(_args: dict[str, Any]) -> dict[str, Any]:
 
 async def _place_paper_order(args: dict[str, Any]) -> dict[str, Any]:
     parsed = PlacePaperOrderArgs.model_validate(args)
-    confirmed = bool(args.get("confirmed", False))
+    # Never trust LLM/tool `confirmed` — only the trading API / UI may confirm fills.
     draft = {
         "symbol": parsed.symbol,
         "side": parsed.side.lower(),
@@ -175,26 +193,15 @@ async def _place_paper_order(args: dict[str, Any]) -> dict[str, Any]:
         "idempotency_key": parsed.idempotency_key,
         "order_type": "market",
     }
-    if not confirmed:
-        return {
-            "pending_confirmation": True,
-            "draft": draft,
-            "mode": "paper",
-            "warning": (
-                "Paper trade only — not financial advice. Markets involve risk of loss. "
-                "Confirm in the chat UI to execute on the paper account."
-            ),
-        }
-    order = get_paper_broker().place_order(
-        symbol=parsed.symbol,
-        side=parsed.side,
-        quantity=parsed.quantity,
-        price=parsed.price,
-        asset_class=parsed.asset_class,
-        idempotency_key=parsed.idempotency_key,
-        force_open_market=True,  # agent paper orders allowed off-hours for usability
-    )
-    return order.to_dict()
+    return {
+        "pending_confirmation": True,
+        "draft": draft,
+        "mode": "paper",
+        "warning": (
+            "Paper trade only — not financial advice. Markets involve risk of loss. "
+            "Confirm in the chat UI to execute on the paper account."
+        ),
+    }
 
 
 async def _run_screener(args: dict[str, Any]) -> dict[str, Any]:
@@ -224,6 +231,16 @@ async def _search(args: dict[str, Any]) -> dict[str, Any]:
     return {"results": await get_market_registry().search(parsed.query)}
 
 
+async def _create_alert(args: dict[str, Any]) -> dict[str, Any]:
+    parsed = CreateAlertArgs.model_validate(args)
+    cond = parsed.condition.lower()
+    if cond not in ("above", "below"):
+        raise ValueError("condition must be above or below")
+    from finagent.scheduler import add_alert
+
+    return await add_alert(parsed.symbol.upper(), cond, parsed.threshold)
+
+
 HANDLERS: dict[str, ToolHandler] = {
     "get_quote": _get_quote,
     "get_option_chain": _get_option_chain,
@@ -231,6 +248,7 @@ HANDLERS: dict[str, ToolHandler] = {
     "place_paper_order": _place_paper_order,
     "run_screener": _run_screener,
     "search_symbols": _search,
+    "create_alert": _create_alert,
 }
 
 

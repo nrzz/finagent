@@ -65,6 +65,8 @@ class Holding(Base):
     avg_cost: Mapped[str] = mapped_column(String(64))
     currency: Mapped[str] = mapped_column(String(8), default="INR")
     account: Mapped[str] = mapped_column(String(64), default="default")
+    # Per-lot acquisition date (ISO) — one Holding row per FIFO lot
+    acquired: Mapped[str | None] = mapped_column(String(32), nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()

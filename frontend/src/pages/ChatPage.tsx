@@ -57,6 +57,30 @@ export function ChatPage() {
         });
       })
       .catch(() => undefined);
+    api<{ messages: { role: string; content: string; tool_calls?: { trace?: unknown[] }; citations?: { items?: Record<string, unknown>[] } }[] }>(
+      "/api/chat/history?limit=80",
+    )
+      .then((res) => {
+        if (!res.messages?.length) return;
+        const loaded = res.messages
+          .filter((m) => m.role === "user" || m.role === "assistant")
+          .map((m) => ({
+            role: m.role as "user" | "assistant",
+            content: m.content,
+            tools: m.tool_calls?.trace,
+            citations: m.citations?.items,
+          }));
+        if (loaded.length) {
+          setMessages([
+            {
+              role: "assistant",
+              content: "Restored prior chat. Ask for quotes, paper trades, or portfolio checks.\n\n**Not financial advice.**",
+            },
+            ...loaded,
+          ]);
+        }
+      })
+      .catch(() => undefined);
   }, []);
 
   async function send(text?: string) {

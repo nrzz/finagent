@@ -14,9 +14,10 @@ if DATA.exists():
 DATA.mkdir(parents=True, exist_ok=True)
 
 os.environ["FINAGENT_DATA_DIR"] = str(DATA)
-os.environ["FINAGENT_DATABASE_URL"] = "sqlite+aiosqlite:///playwright.db"
+os.environ["FINAGENT_DATABASE_URL"] = f"sqlite+aiosqlite:///{(DATA / 'playwright.db').as_posix()}"
 os.environ["FINAGENT_SECRET_KEY"] = "playwright-secret-key-for-fernet-32c"
 os.environ["FINAGENT_JWT_SECRET"] = "playwright-jwt-secret-please-change-32"
+os.environ["FINAGENT_ALLOW_INSECURE_SECRETS"] = "1"
 os.environ["PYTHONPATH"] = str(ROOT / "src")
 
 sys.path.insert(0, str(ROOT / "src"))

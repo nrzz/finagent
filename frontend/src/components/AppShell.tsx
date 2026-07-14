@@ -1,4 +1,5 @@
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
+import { useEffect, useState } from "react";
 import {
   Bot,
   Briefcase,
@@ -11,7 +12,7 @@ import {
   CandlestickChart,
   Bell,
 } from "lucide-react";
-import { clearToken } from "@/lib/api";
+import { api, clearToken } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { CommandPalette } from "@/components/CommandPalette";
 import { cn } from "@/lib/utils";
@@ -29,6 +30,25 @@ const nav = [
 
 export function AppShell() {
   const navigate = useNavigate();
+  const [unread, setUnread] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    const tick = () => {
+      api<{ items: { read: boolean }[] }>("/api/notifications")
+        .then((res) => {
+          if (!cancelled) setUnread((res.items || []).filter((i) => !i.read).length);
+        })
+        .catch(() => undefined);
+    };
+    tick();
+    const id = window.setInterval(tick, 30000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, []);
+
   return (
     <div className="min-h-screen flex flex-col md:flex-row bg-background">
       <aside className="hidden md:flex md:w-60 flex-col border-r border-border p-4 gap-2">
@@ -52,7 +72,12 @@ export function AppShell() {
             }
           >
             <item.icon className="h-4 w-4" />
-            {item.label}
+            <span className="flex-1">{item.label}</span>
+            {item.to === "/automation" && unread > 0 && (
+              <span className="text-[10px] rounded-full bg-primary/90 text-primary-foreground px-1.5 min-w-[1.25rem] text-center">
+                {unread > 9 ? "9+" : unread}
+              </span>
+            )}
           </NavLink>
         ))}
         <div className="mt-auto pt-4 space-y-3">

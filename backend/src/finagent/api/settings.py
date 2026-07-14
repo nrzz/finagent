@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,6 +25,25 @@ from finagent.security import encrypt_secret, mask_secret
 from finagent.security.store import cache_secret
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
+
+
+def _profile_is_ollama(profile: LLMProfile) -> bool:
+    prov = getattr(profile.provider, "value", profile.provider)
+    return str(prov) == "ollama"
+
+
+async def _exclusive_ollama_for_profile(profile: LLMProfile) -> dict[str, Any] | None:
+    """Unload other Ollama models from RAM so only this profile's model stays loaded."""
+    from finagent.llm.ollama_runtime import ensure_exclusive_model
+
+    try:
+        return await ensure_exclusive_model(
+            profile.model,
+            profile.base_url or "http://127.0.0.1:11434",
+            warm=False,
+        )
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
 
 
 class SettingsUpdate(BaseModel):
@@ -53,6 +76,7 @@ class ProfileIn(BaseModel):
     enabled: bool = True
     make_active: bool = False
     make_fallback: bool = False
+    reauth_password: str | None = None
 
 
 class ProbeIn(BaseModel):
@@ -64,6 +88,7 @@ class ProbeIn(BaseModel):
 class PullIn(BaseModel):
     model: str
     base_url: str | None = None
+    replace: bool = False  # cancel other in-flight install first (only one at a time)
 
 
 class ActivateIn(BaseModel):
@@ -172,12 +197,23 @@ async def update_settings(
     if (
         new_settings.trading.mode != current.trading.mode
         or new_settings.trading.kill_switch != current.trading.kill_switch
+        or new_settings.trading.require_order_confirmation
+        != current.trading.require_order_confirmation
     ):
         sensitive = True
+    # Live mode: confirmation cannot be turned off without step-up (already in sensitive)
+    if (
+        new_settings.trading.mode.value == "live"
+        and not new_settings.trading.require_order_confirmation
+    ):
+        # Force confirmation on for live unless they explicitly re-authed to disable
+        if not body.reauth_password:
+            new_settings.trading.require_order_confirmation = True
     if sensitive:
         if not body.reauth_password:
             raise HTTPException(
-                status_code=403, detail="Re-authentication required for trading mode changes"
+                status_code=403,
+                detail="Re-authentication required for trading mode / confirmation changes",
             )
         from finagent.api.auth import verify_password
 
@@ -206,10 +242,22 @@ async def complete_wizard(
     for key in ("llm", "markets", "trading", "appearance"):
         if key in body.settings and isinstance(body.settings[key], dict):
             merged[key] = {**current.model_dump(mode="json").get(key, {}), **body.settings[key]}
+    # Wizard must never silently enable live trading
+    trading_patch = body.settings.get("trading") or {}
+    if isinstance(trading_patch, dict) and str(trading_patch.get("mode", "")).lower() == "live":
+        raise HTTPException(
+            status_code=403,
+            detail="Live trading cannot be enabled from the setup wizard. Use Settings with password re-auth after launch.",
+        )
+    if "trading" in merged and isinstance(merged["trading"], dict):
+        merged["trading"]["mode"] = "paper"
     new_settings = AppSettings.model_validate(merged)
     new_settings.setup_complete = True
     new_settings.risk_acknowledged = True
     new_settings.risk_acknowledged_at = datetime.now(timezone.utc).isoformat()
+    from finagent.config.schema import TradingMode
+
+    new_settings.trading.mode = TradingMode.PAPER
     new_settings.llm.ensure_profiles()
     # If wizard sent legacy llm fields without profiles, rebuild profile from them
     if body.settings.get("llm") and not (body.settings.get("llm") or {}).get("profiles"):
@@ -259,8 +307,23 @@ async def upsert_profile(
 ) -> dict[str, Any]:
     settings = await sync_settings_from_db(db)
     meta = get_provider(body.provider)
+    if body.base_url:
+        from finagent.security.url_safety import assert_llm_base_url
+
+        try:
+            assert_llm_base_url(body.base_url, provider=body.provider)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
     secret_name = body.api_key_name
     if body.api_key_value:
+        if not body.reauth_password:
+            raise HTTPException(
+                status_code=403, detail="Re-authentication required to store API keys"
+            )
+        from finagent.api.auth import verify_password
+
+        if not verify_password(body.reauth_password, user.password_hash):
+            raise HTTPException(status_code=403, detail="Re-authentication failed")
         secret_name = secret_name or (meta or {}).get("secret_name") or f"{body.provider.upper()}_API_KEY"
         cipher = encrypt_secret(body.api_key_value)
         existing = await db.execute(select(SecretRow).where(SecretRow.name == secret_name))
@@ -304,7 +367,15 @@ async def upsert_profile(
         settings.llm.fallback_profile_id = pid
     settings.llm.sync_legacy_from_active()
     await _persist(db, settings, user, "llm_profile_upsert")
-    return {"ok": True, "profile": profile.model_dump(mode="json"), "settings": settings.public_dict()}
+    exclusive = None
+    if body.make_active and _profile_is_ollama(profile):
+        exclusive = await _exclusive_ollama_for_profile(profile)
+    return {
+        "ok": True,
+        "profile": profile.model_dump(mode="json"),
+        "settings": settings.public_dict(),
+        "ollama_exclusive": exclusive,
+    }
 
 
 @router.delete("/llm/profiles/{profile_id}")
@@ -352,7 +423,12 @@ async def activate_profile(
         raise HTTPException(status_code=400, detail="role must be active|fallback|chat|analysis")
     settings.llm.sync_legacy_from_active()
     await _persist(db, settings, user, "llm_activate")
-    return {"ok": True, "settings": settings.public_dict()}
+    exclusive = None
+    if body.role == "active":
+        profile = next(p for p in settings.llm.profiles if p.id == body.profile_id)
+        if _profile_is_ollama(profile):
+            exclusive = await _exclusive_ollama_for_profile(profile)
+    return {"ok": True, "settings": settings.public_dict(), "ollama_exclusive": exclusive}
 
 
 @router.post("/llm/test")
@@ -378,13 +454,129 @@ async def list_llm_models(body: ProbeIn, user: User = Depends(get_current_user))
 
 @router.post("/llm/ollama/pull")
 async def pull_ollama(body: PullIn, user: User = Depends(get_current_user)) -> dict[str, Any]:
-    return await get_llm_router().pull_ollama_model(body.model, body.base_url)
+    """Blocking pull (scripts). Prefer /pull/stream for UI progress."""
+    from finagent.llm import pull_jobs
+
+    try:
+        job, _ = await pull_jobs.start_or_attach(body.model, body.base_url)
+        if job.progress.phase == "success" and job.progress.status == "already installed":
+            return {"ok": True, "model": body.model, "already_installed": True}
+        if job.task:
+            await job.task
+        if job.progress.phase == "success":
+            return {"ok": True, "model": body.model}
+        return {
+            "ok": False,
+            "error": job.progress.error or "Pull failed",
+            "hint": "Is Ollama running? Install from https://ollama.com/download then retry.",
+        }
+    except RuntimeError as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+@router.get("/llm/ollama/pull/status")
+async def pull_status(
+    model: str | None = None, user: User = Depends(get_current_user)
+) -> dict[str, Any]:
+    from finagent.llm import pull_jobs
+
+    return pull_jobs.status_payload(model)
+
+
+@router.post("/llm/ollama/pull/cancel")
+async def pull_cancel(body: PullIn, user: User = Depends(get_current_user)) -> dict[str, Any]:
+    from finagent.llm import pull_jobs
+
+    if not body.model or body.model == "*":
+        cancelled = await pull_jobs.cancel_active_pull()
+        return {"ok": bool(cancelled), "model": cancelled}
+    ok = await pull_jobs.cancel_pull(body.model)
+    return {"ok": ok, "model": body.model}
+
+
+@router.post("/llm/ollama/pull/stream")
+async def pull_stream(body: PullIn, user: User = Depends(get_current_user)) -> StreamingResponse:
+    """SSE progress for Ollama model install (percent / bytes / ETA). Only one pull at a time."""
+    from finagent.llm import pull_jobs
+
+    try:
+        job, attached = await pull_jobs.start_or_attach(
+            body.model, body.base_url, replace=body.replace
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    queue = await pull_jobs.subscribe(body.model)
+    if queue is None:
+        raise HTTPException(status_code=500, detail="Failed to subscribe to pull job")
+
+    async def event_gen():  # type: ignore[no-untyped-def]
+        try:
+            # Immediate snapshot
+            yield f"data: {json.dumps({**job.progress.to_dict(), 'attached': attached})}\n\n"
+            if job.progress.phase == "success":
+                yield f"data: {json.dumps(job.progress.to_dict())}\n\n"
+                return
+            while True:
+                try:
+                    payload = await asyncio.wait_for(queue.get(), timeout=5.0)
+                except TimeoutError:
+                    # heartbeat
+                    yield f"data: {json.dumps({**job.progress.to_dict(), 'heartbeat': True})}\n\n"
+                    if job.progress.phase in ("success", "failed", "cancelled"):
+                        break
+                    continue
+                yield f"data: {json.dumps(payload)}\n\n"
+                if payload.get("phase") in ("success", "failed", "cancelled"):
+                    break
+        finally:
+            pull_jobs.unsubscribe(body.model, queue)
+
+    return StreamingResponse(
+        event_gen(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.get("/llm/ollama/models")
 async def ollama_models(user: User = Depends(get_current_user)) -> dict[str, Any]:
     models = await get_llm_router().list_ollama_models()
-    return {"models": models, "catalog": get_provider("ollama")}
+    from finagent.llm.ollama_runtime import list_loaded_models
+
+    loaded = await list_loaded_models("http://127.0.0.1:11434")
+    return {
+        "models": models,
+        "loaded": loaded,
+        "catalog": get_provider("ollama"),
+    }
+
+
+class ExclusiveIn(BaseModel):
+    model: str
+    base_url: str | None = None
+    warm: bool = False
+
+
+@router.get("/llm/ollama/ps")
+async def ollama_ps(
+    base_url: str | None = None, user: User = Depends(get_current_user)
+) -> dict[str, Any]:
+    """Models currently loaded in Ollama RAM/VRAM."""
+    from finagent.llm.ollama_runtime import list_loaded_models
+
+    loaded = await list_loaded_models(base_url)
+    return {"ok": True, "loaded": loaded}
+
+
+@router.post("/llm/ollama/exclusive")
+async def ollama_exclusive(
+    body: ExclusiveIn, user: User = Depends(get_current_user)
+) -> dict[str, Any]:
+    """Unload every other Ollama model so only ``model`` can stay in memory."""
+    from finagent.llm.ollama_runtime import ensure_exclusive_model
+
+    return await ensure_exclusive_model(body.model, body.base_url, warm=body.warm)
 
 
 @router.put("/secrets")
@@ -393,6 +585,14 @@ async def upsert_secret(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
+    if not body.reauth_password:
+        raise HTTPException(
+            status_code=403, detail="Re-authentication required to store API secrets"
+        )
+    from finagent.api.auth import verify_password
+
+    if not verify_password(body.reauth_password, user.password_hash):
+        raise HTTPException(status_code=403, detail="Re-authentication failed")
     result = await db.execute(select(SecretRow).where(SecretRow.name == body.name))
     row = result.scalar_one_or_none()
     cipher = encrypt_secret(body.value)
@@ -409,3 +609,61 @@ async def upsert_secret(
 @router.get("/export")
 async def export_settings(user: User = Depends(get_current_user)) -> dict[str, Any]:
     return {"settings": get_settings().public_dict(), "note": "Secrets are not exported"}
+
+
+@router.get("/backup")
+async def download_backup(user: User = Depends(get_current_user)) -> FileResponse:
+    """Download SQLite DB snapshot (secrets remain ciphertext — keep FINAGENT_SECRET_KEY)."""
+    from finagent.config import get_env
+
+    env = get_env()
+    db_path = Path(env.data_dir) / "finagent.db"
+    # Resolve from database_url if needed
+    url = env.database_url
+    if "sqlite" in url and "///" in url:
+        raw = url.split("///", 1)[-1]
+        candidate = Path(raw)
+        if candidate.exists():
+            db_path = candidate
+    if not db_path.exists():
+        raise HTTPException(status_code=404, detail=f"Database not found at {db_path}")
+    return FileResponse(
+        path=str(db_path),
+        filename="finagent-backup.db",
+        media_type="application/octet-stream",
+    )
+
+
+@router.post("/backup/restore")
+async def restore_backup(
+    user: User = Depends(get_current_user),
+    file: UploadFile = File(...),
+) -> dict[str, Any]:
+    """Replace SQLite DB with uploaded backup. Restart FinAgent after restore."""
+    from finagent.config import get_env
+
+    if not file.filename or not file.filename.endswith(".db"):
+        raise HTTPException(status_code=400, detail="Upload a .db backup file")
+    data = await file.read()
+    if len(data) > 200 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Backup too large (>200MB)")
+    if len(data) < 100:
+        raise HTTPException(status_code=400, detail="File too small to be a valid SQLite DB")
+    env = get_env()
+    db_path = Path(env.data_dir) / "finagent.db"
+    url = env.database_url
+    if "sqlite" in url and "///" in url:
+        candidate = Path(url.split("///", 1)[-1])
+        if candidate.parent.exists():
+            db_path = candidate
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    bak = db_path.with_suffix(".db.pre-restore")
+    if db_path.exists():
+        bak.write_bytes(db_path.read_bytes())
+    db_path.write_bytes(data)
+    return {
+        "ok": True,
+        "path": str(db_path),
+        "previous_backup": str(bak) if bak.exists() else None,
+        "note": "Restart FinAgent to load the restored database. Keep the same FINAGENT_SECRET_KEY.",
+    }

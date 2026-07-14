@@ -127,10 +127,9 @@ def _demo_complete(messages: list[dict[str, Any]]) -> dict[str, Any]:
             "content": json.dumps(
                 {
                     "final": (
-                        "Here is what I found from live tools (demo LLM mode).\n\n"
+                        "Here is what I found from live tools.\n\n"
                         f"```json\n{json.dumps(result, indent=2)[:3500]}\n```\n\n"
-                        "_Not financial advice. Switch to Ollama or a cloud model in Settings "
-                        "for richer natural-language analysis._"
+                        "_Not financial advice._"
                     )
                 }
             ),
@@ -139,7 +138,7 @@ def _demo_complete(messages: list[dict[str, Any]]) -> dict[str, Any]:
         }
 
     text = last_user.lower()
-    # Detect symbol-ish tokens (skip command words like PAPER from "Paper-buy")
+    # Detect symbol-ish tokens (skip command / English filler — "is"/"of" match ticker regex)
     _skip = {
         "PAPER",
         "BUY",
@@ -167,6 +166,68 @@ def _demo_complete(messages: list[dict[str, Any]]) -> dict[str, Any]:
         "THIS",
         "THAT",
         "PLEASE",
+        "IS",
+        "OF",
+        "A",
+        "AN",
+        "TO",
+        "IN",
+        "ON",
+        "AT",
+        "OR",
+        "BE",
+        "AM",
+        "ARE",
+        "WAS",
+        "WERE",
+        "DO",
+        "DOES",
+        "DID",
+        "CAN",
+        "WILL",
+        "WOULD",
+        "SHOULD",
+        "COULD",
+        "JUST",
+        "ME",
+        "YOU",
+        "IT",
+        "WE",
+        "THEY",
+        "HIS",
+        "HER",
+        "ITS",
+        "OUR",
+        "YOUR",
+        "ALL",
+        "ANY",
+        "NOT",
+        "YES",
+        "NOW",
+        "OUT",
+        "UP",
+        "IF",
+        "SO",
+        "AS",
+        "BY",
+        "WHO",
+        "WHY",
+        "WHEN",
+        "WHERE",
+        "WHICH",
+        "ABOUT",
+        "INTO",
+        "HAVE",
+        "HAS",
+        "HAD",
+        "GIVE",
+        "TELL",
+        "CURRENT",
+        "TODAY",
+        "STOCK",
+        "SHARE",
+        "SHARES",
+        "MARKET",
     }
     candidates = re.findall(
         r"\b([A-Z]{1,10}(?:\.NS|\.BO)?|[A-Z]{2,10}/USDT|MF:\d+|BTC|ETH|AAPL|MSFT|GOOGL|RELIANCE|TCS|INFY)\b",
@@ -174,9 +235,13 @@ def _demo_complete(messages: list[dict[str, Any]]) -> dict[str, Any]:
         re.I,
     )
     symbol = None
-    for cand in candidates:
+    # Prefer last token (tickers usually at end: "price of AAPL")
+    for cand in reversed(candidates):
         up = cand.upper()
         if up in _skip:
+            continue
+        # Skip bare 1–2 letter noise unless crypto / known short tickers
+        if len(up.split(".")[0].split("/")[0]) <= 2 and up not in {"BTC", "ETH", "V", "T", "F"}:
             continue
         symbol = up
         break
@@ -222,7 +287,11 @@ def _demo_complete(messages: list[dict[str, Any]]) -> dict[str, Any]:
             "tool_calls": [],
             "raw": {"provider": "demo"},
         }
-    if any(w in text for w in ("option", "options", "chain", "ce", "pe")) and symbol:
+    # Word-bound CE/PE — bare "ce"/"pe" match inside "price"/"open" etc.
+    if (
+        any(w in text for w in ("option", "options", "option chain", "opt chain"))
+        or re.search(r"\b(ce|pe|chain)\b", text)
+    ) and symbol:
         return {
             "content": json.dumps({"tool": "get_option_chain", "arguments": {"symbol": symbol}}),
             "tool_calls": [],
@@ -272,6 +341,11 @@ def _demo_complete(messages: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def intent_tool_json(messages: list[dict[str, Any]]) -> dict[str, Any]:
+    """Deterministic tool/final JSON from user text — used by Demo and as Ollama rescue."""
+    return _demo_complete(messages)
+
+
 class LLMRouter:
     def __init__(self) -> None:
         self.settings = get_settings().llm
@@ -301,8 +375,26 @@ class LLMRouter:
         if mode != ToolMode.AUTO:
             return mode
         model = self.settings.model.lower()
-        tiny_markers = ("3b", "1b", "2b", "phi", "tiny", "mini", "gemma:2b")
-        if any(m in model for m in tiny_markers):
+        # Local / small models invent tools under "native" mode — keep them on JSON.
+        # 7B and below are unreliable for OpenAI-style tool_calls in finance chat.
+        small_markers = (
+            "1b",
+            "2b",
+            "3b",
+            "4b",
+            "7b",
+            "8b",
+            "phi",
+            "tiny",
+            "mini",
+            "gemma",
+            "llama3.2",
+            "qwen2.5:7b",
+            "qwen2.5:3b",
+        )
+        if self.settings.provider == LLMProvider.OLLAMA:
+            return ToolMode.JSON_FALLBACK
+        if any(m in model for m in small_markers):
             return ToolMode.JSON_FALLBACK
         return ToolMode.NATIVE
 
@@ -443,7 +535,12 @@ class LLMRouter:
         payload: dict[str, Any] = {
             "model": model,
             "messages": msgs,
-            "temperature": self.settings.temperature,
+            # Local models need low temperature for reliable JSON tool calls
+            "temperature": (
+                min(self.settings.temperature, 0.2)
+                if self.settings.provider == LLMProvider.OLLAMA
+                else self.settings.temperature
+            ),
             "stream": False,
         }
         if tools and mode == ToolMode.NATIVE:
@@ -452,6 +549,14 @@ class LLMRouter:
 
         timeout = httpx.Timeout(self.settings.timeout_s)
         async with httpx.AsyncClient(timeout=timeout) as client:
+            if self.settings.provider == LLMProvider.OLLAMA:
+                try:
+                    from finagent.llm.ollama_runtime import ensure_exclusive_model
+
+                    await ensure_exclusive_model(model, self.settings.base_url, warm=False)
+                except Exception as exc:
+                    log.info("ollama_exclusive_skip", error=str(exc))
+                payload["keep_alive"] = "30m"
             resp = await client.post(self._chat_url(), headers=self._headers(), json=payload)
             if resp.status_code >= 400:
                 if self.settings.provider == LLMProvider.OLLAMA:
@@ -498,12 +603,19 @@ class LLMRouter:
             "model": model,
             "messages": ollama_msgs,
             "stream": False,
-            "options": {"temperature": self.settings.temperature},
+            "keep_alive": "30m",
+            "options": {"temperature": min(self.settings.temperature, 0.2)},
         }
         mode = self.effective_tool_mode()
         if tools and mode == ToolMode.NATIVE:
             # Ollama native tool schema (OpenAI-compatible function list)
             payload["tools"] = tools
+        try:
+            from finagent.llm.ollama_runtime import ensure_exclusive_model
+
+            await ensure_exclusive_model(model, self.settings.base_url, warm=False)
+        except Exception as exc:
+            log.info("ollama_exclusive_skip", error=str(exc))
         resp = await client.post(f"{base}/api/chat", headers=self._headers(), json=payload)
         resp.raise_for_status()
         data = resp.json()
@@ -792,7 +904,7 @@ class LLMRouter:
         """Ask local Ollama to pull a model (may take minutes)."""
         base = (base_url or self.settings.base_url or "http://127.0.0.1:11434").replace("/v1", "").rstrip("/")
         try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(600.0)) as client:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(1800.0)) as client:
                 resp = await client.post(f"{base}/api/pull", json={"name": model, "stream": False})
                 if resp.status_code >= 400:
                     return {"ok": False, "error": resp.text[:500]}

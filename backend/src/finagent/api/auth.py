@@ -18,10 +18,15 @@ from finagent.db import get_db
 from finagent.db.models import AuditLog, SettingsRow, User
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+pwd_context = CryptContext(schemes=["argon2", "bcrypt"], deprecated="auto")
 security = HTTPBearer(auto_error=False)
 ALGORITHM = "HS256"
-TOKEN_HOURS = 72
+TOKEN_HOURS = 12
+
+# Simple in-memory login rate limit: username/ip → failures
+_login_failures: dict[str, list[float]] = {}
+_LOGIN_WINDOW_S = 300.0
+_LOGIN_MAX = 8
 
 
 class SetupRequest(BaseModel):
@@ -47,6 +52,39 @@ def hash_password(password: str) -> str:
 
 def verify_password(password: str, password_hash: str) -> bool:
     return pwd_context.verify(password, password_hash)
+
+
+def needs_rehash(password_hash: str) -> bool:
+    return pwd_context.needs_update(password_hash)
+
+
+def _rate_limit_key(username: str) -> str:
+    return username.strip().lower()
+
+
+def _check_login_rate(username: str) -> None:
+    import time
+
+    key = _rate_limit_key(username)
+    now = time.monotonic()
+    window = [t for t in _login_failures.get(key, []) if now - t < _LOGIN_WINDOW_S]
+    _login_failures[key] = window
+    if len(window) >= _LOGIN_MAX:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many login attempts. Try again in a few minutes.",
+        )
+
+
+def _record_login_failure(username: str) -> None:
+    import time
+
+    key = _rate_limit_key(username)
+    _login_failures.setdefault(key, []).append(time.monotonic())
+
+
+def _clear_login_failures(username: str) -> None:
+    _login_failures.pop(_rate_limit_key(username), None)
 
 
 def create_token(username: str) -> str:
@@ -125,10 +163,25 @@ async def setup(body: SetupRequest, db: AsyncSession = Depends(get_db)) -> Token
 
 @router.post("/login", response_model=TokenResponse)
 async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)) -> TokenResponse:
+    _check_login_rate(body.username)
     result = await db.execute(select(User).where(User.username == body.username))
     user = result.scalar_one_or_none()
     if not user or not verify_password(body.password, user.password_hash):
+        _record_login_failure(body.username)
+        db.add(
+            AuditLog(
+                actor=body.username or "unknown",
+                action="login_failed",
+                detail={},
+            )
+        )
+        await db.commit()
         raise HTTPException(status_code=401, detail="Invalid credentials")
+    _clear_login_failures(body.username)
+    if needs_rehash(user.password_hash):
+        user.password_hash = hash_password(body.password)
+    db.add(AuditLog(actor=user.username, action="login_ok", detail={}))
+    await db.commit()
     return TokenResponse(
         access_token=create_token(user.username),
         username=user.username,

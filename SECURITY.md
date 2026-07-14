@@ -26,3 +26,11 @@ We aim to acknowledge within 72 hours and ship a fix or mitigation ASAP.
 - FinAgent is self-hosted; you are responsible for network exposure (prefer Tailscale / reverse-proxy HTTPS).
 - Live trading plugins can move real money â€” treat API keys as highly sensitive.
 - The agent must never be able to enable live mode or read decrypted secrets; please report any bypass.
+## Hardening notes (high-tier uplift)
+
+- Secrets: Fernet ciphertext; KEK via Argon2id; secret upsert requires password re-auth
+- Passwords: Argon2id (bcrypt migrates on next login); login rate-limited and audited
+- Startup fails closed on insecure default JWT/Fernet secrets unless `FINAGENT_ALLOW_INSECURE_SECRETS=1`
+- Wizard cannot enable live trading; live orders always need confirmation
+- LLM URL SSRF allowlist; agent cannot confirm paper fills without the trading UI
+- Backups export ciphertext only — restore with the same `FINAGENT_SECRET_KEY`, then restart

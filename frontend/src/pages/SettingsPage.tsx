@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+ import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { getApiBase, setApiBase } from "@/lib/native";
 import { Button } from "@/components/ui/button";
@@ -18,7 +18,7 @@ type SettingsPayload = {
   };
 };
 
-type Tab = "ai" | "markets" | "trading" | "brokers" | "appearance" | "device" | "secrets";
+type Tab = "ai" | "markets" | "trading" | "brokers" | "appearance" | "device" | "secrets" | "backup";
 
 export function SettingsPage() {
   const [tab, setTab] = useState<Tab>("ai");
@@ -69,6 +69,7 @@ export function SettingsPage() {
     { id: "appearance", label: "Appearance" },
     { id: "device", label: "Device / APK" },
     { id: "secrets", label: "Secrets" },
+    { id: "backup", label: "Backup" },
   ];
 
   return (
@@ -400,18 +401,100 @@ export function SettingsPage() {
               <Label>Value</Label>
               <Input type="password" value={secretValue} onChange={(e) => setSecretValue(e.target.value)} />
             </div>
+            <div className="space-y-1">
+              <Label>Password (re-auth)</Label>
+              <Input
+                type="password"
+                value={reauth}
+                onChange={(e) => setReauth(e.target.value)}
+                placeholder="Confirm your FinAgent password"
+              />
+            </div>
             <Button
               onClick={async () => {
-                await api("/api/settings/secrets", {
-                  method: "PUT",
-                  body: JSON.stringify({ name: secretName, value: secretValue }),
-                });
-                setSecretValue("");
-                setMsg("Secret stored");
+                try {
+                  await api("/api/settings/secrets", {
+                    method: "PUT",
+                    body: JSON.stringify({
+                      name: secretName,
+                      value: secretValue,
+                      reauth_password: reauth,
+                    }),
+                  });
+                  setSecretValue("");
+                  setReauth("");
+                  setMsg("Secret stored");
+                } catch (e) {
+                  setMsg(e instanceof Error ? e.message : "Failed");
+                }
               }}
             >
               Store secret
             </Button>
+          </CardContent>
+        </Card>
+      )}
+
+      {tab === "backup" && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Backup & restore</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              Download your SQLite database (API keys stay encrypted). Keep the same FINAGENT_SECRET_KEY when
+              restoring. Restart FinAgent after restore.
+            </p>
+            <Button
+              onClick={() => {
+                void (async () => {
+                  const token = localStorage.getItem("finagent_token");
+                  const res = await fetch(`${getApiBase()}/api/settings/backup`, {
+                    headers: token ? { Authorization: `Bearer ${token}` } : {},
+                  });
+                  if (!res.ok) {
+                    setMsg("Backup failed");
+                    return;
+                  }
+                  const blob = await res.blob();
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement("a");
+                  a.href = url;
+                  a.download = "finagent-backup.db";
+                  a.click();
+                  URL.revokeObjectURL(url);
+                  setMsg("Backup downloaded");
+                })();
+              }}
+            >
+              Download backup
+            </Button>
+            <div className="space-y-1">
+              <Label>Restore .db file</Label>
+              <Input
+                type="file"
+                accept=".db"
+                onChange={async (e) => {
+                  const f = e.target.files?.[0];
+                  if (!f) return;
+                  if (!window.confirm("Replace the database? Restart FinAgent after this.")) return;
+                  const fd = new FormData();
+                  fd.append("file", f);
+                  const token = localStorage.getItem("finagent_token");
+                  const res = await fetch(`${getApiBase()}/api/settings/backup/restore`, {
+                    method: "POST",
+                    headers: token ? { Authorization: `Bearer ${token}` } : {},
+                    body: fd,
+                  });
+                  const body = await res.json().catch(() => ({}));
+                  setMsg(
+                    res.ok
+                      ? body.note || "Restored — restart FinAgent"
+                      : String(body.detail || "Restore failed"),
+                  );
+                }}
+              />
+            </div>
           </CardContent>
         </Card>
       )}

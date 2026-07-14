@@ -81,9 +81,26 @@ You do **not** need Android Studio for this.
 
 ## Optional — smarter local AI (Ollama)
 
-1. Install [Ollama](https://ollama.com/download)
-2. In FinAgent: **Settings → AI / LLMs**
-3. Activate Ollama and set **Demo** as Fallback
+1. Install [Ollama](https://ollama.com/download) (one-time)
+2. In FinAgent: **Settings → AI / LLMs → Ollama**
+3. Click a model once — FinAgent **downloads + activates** it (and keeps **Demo** as Fallback)
+
+| Tier | Examples | Rough hardware |
+|------|----------|----------------|
+| Fast | 3B | 4–8 GB RAM |
+| Balanced | 7B / 8B | 8–16 GB |
+| Quality | 14B–27B | 12–24 GB VRAM |
+| High-end | 32B | 24–48 GB |
+| Flagship | 70B / 72B | 48 GB+ |
+| Extreme | 405B | Multi-GPU / server |
+
+Leave the tab open during big downloads. If chat feels wrong, set Active back to **Demo**.
+
+---
+
+## Backup
+
+**Settings → Backup** → Download backup. Store the `.db` file and your `.env` (`FINAGENT_SECRET_KEY`) together. Restore uploads the `.db` then restart FinAgent.
 
 ---
 

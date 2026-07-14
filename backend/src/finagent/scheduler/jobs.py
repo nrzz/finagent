@@ -39,6 +39,10 @@ async def _notify(kind: str, title: str, body: str, payload: dict[str, Any] | No
 
 
 async def scan_alerts() -> dict[str, Any]:
+    """Fire alerts with cooldown — do not re-notify while condition still holds within window."""
+    from datetime import timedelta
+
+    cooldown = timedelta(minutes=60)
     triggered: list[dict[str, Any]] = []
     async with get_session_factory()() as session:
         rules = (await session.execute(select(AlertRule).where(AlertRule.active.is_(True)))).scalars().all()
@@ -48,26 +52,34 @@ async def scan_alerts() -> dict[str, Any]:
                 thr = D(rule.threshold)
                 cond = rule.condition
                 hit = (cond == "above" and q.price >= thr) or (cond == "below" and q.price <= thr)
-                if hit:
-                    event = {
-                        "symbol": rule.symbol,
-                        "condition": cond,
-                        "threshold": str(thr),
-                        "price": str(q.price),
-                        "as_of": q.as_of.isoformat(),
-                        "source": q.source,
-                    }
-                    triggered.append(event)
-                    rule.last_triggered_at = datetime.now(UTC)
-                    session.add(
-                        Notification(
-                            kind="alert",
-                            title=f"Alert: {rule.symbol} {cond} {thr}",
-                            body=f"Price {q.price} ({q.source})",
-                            payload=event,
-                        )
+                if not hit:
+                    continue
+                now = datetime.now(UTC)
+                if rule.last_triggered_at:
+                    last = rule.last_triggered_at
+                    if last.tzinfo is None:
+                        last = last.replace(tzinfo=UTC)
+                    if now - last < cooldown:
+                        continue
+                event = {
+                    "symbol": rule.symbol,
+                    "condition": cond,
+                    "threshold": str(thr),
+                    "price": str(q.price),
+                    "as_of": q.as_of.isoformat(),
+                    "source": q.source,
+                }
+                triggered.append(event)
+                rule.last_triggered_at = now
+                session.add(
+                    Notification(
+                        kind="alert",
+                        title=f"Alert: {rule.symbol} {cond} {thr}",
+                        body=f"Price {q.price} ({q.source})",
+                        payload=event,
                     )
-                    log.info("alert_triggered", **event)
+                )
+                log.info("alert_triggered", **event)
             except Exception as exc:
                 log.warning("alert_scan_error", error=str(exc), symbol=rule.symbol)
         await session.commit()

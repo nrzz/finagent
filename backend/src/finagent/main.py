@@ -7,6 +7,8 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import uvicorn
+from typing import Any
+
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
@@ -65,6 +67,21 @@ def create_app() -> FastAPI:
     # Ensure .env exists before reading settings (first-run friendliness)
     ensure_runtime_env(_project_root())
     setup_logging(get_env().log_level)
+    from finagent.security.secrets import assert_secure_keys
+
+    try:
+        assert_secure_keys()
+    except RuntimeError as exc:
+        # Allow pytest / CI with env flag; otherwise fail closed
+        import os
+
+        if os.environ.get("FINAGENT_ALLOW_INSECURE_SECRETS", "").lower() not in (
+            "1",
+            "true",
+            "yes",
+        ):
+            raise
+
     app = FastAPI(
         title="FinAgent",
         description=(
@@ -75,11 +92,18 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    origins = get_env().cors_origins
+    origins = get_env().cors_origins.strip()
+    # Refuse credentials + wildcard; tighten * when binding beyond localhost docs
+    if origins == "*":
+        allow_origins = ["*"]
+        allow_credentials = False
+    else:
+        allow_origins = [o.strip() for o in origins.split(",") if o.strip()]
+        allow_credentials = True
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"] if origins == "*" else [o.strip() for o in origins.split(",")],
-        allow_credentials=True,
+        allow_origins=allow_origins,
+        allow_credentials=allow_credentials,
         allow_methods=["*"],
         allow_headers=["*"],
     )
@@ -96,6 +120,31 @@ def create_app() -> FastAPI:
     @app.get("/api/health")
     async def health() -> dict[str, str]:
         return {"status": "ok", "version": __version__, "telemetry": "none"}
+
+    @app.get("/api/health/ready")
+    async def ready() -> dict[str, Any]:
+        from sqlalchemy import text
+
+        from finagent.db import get_session_factory
+        from finagent.scheduler.jobs import get_scheduler
+
+        checks: dict[str, str] = {}
+        try:
+            async with get_session_factory()() as session:
+                await session.execute(text("SELECT 1"))
+            checks["database"] = "ok"
+        except Exception as exc:
+            checks["database"] = f"error: {exc}"
+        try:
+            sched = get_scheduler()
+            checks["scheduler"] = "ok" if sched and sched.running else "stopped"
+        except Exception as exc:
+            checks["scheduler"] = f"error: {exc}"
+        ok = checks.get("database") == "ok"
+        payload = {"status": "ready" if ok else "degraded", "version": __version__, "checks": checks}
+        if not ok:
+            return JSONResponse(status_code=503, content=payload)
+        return payload
 
     frontend_dist = _project_root() / "frontend" / "dist"
     if frontend_dist.exists():

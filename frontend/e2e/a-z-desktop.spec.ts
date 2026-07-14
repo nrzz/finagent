@@ -75,15 +75,16 @@ test.describe("A–Z desktop UI", () => {
     await shot(page, "02-chat-quote");
 
     await page.getByRole("button", { name: "Paper-buy 10 AAPL" }).click();
-    await expect(page.getByText("Confirm paper trade")).toBeVisible({ timeout: 60_000 });
+    await expect(page.getByText("Confirm paper trade").last()).toBeVisible({ timeout: 60_000 });
     await shot(page, "02-chat-confirm-card");
-    await page.getByRole("button", { name: "Cancel" }).click();
+    await page.getByRole("button", { name: "Cancel" }).last().click();
     await expect(page.getByText(/Cancelled proposed/i)).toBeVisible();
     await shot(page, "02-chat-cancel");
 
     await page.getByRole("button", { name: "Paper-buy 10 AAPL" }).click();
-    await expect(page.getByText("Confirm paper trade")).toBeVisible({ timeout: 60_000 });
-    await page.getByRole("button", { name: "Confirm" }).click();
+    // Cancelled card still shows the title; assert the newest proposal card.
+    await expect(page.getByText("Confirm paper trade").last()).toBeVisible({ timeout: 60_000 });
+    await page.getByRole("button", { name: "Confirm" }).last().click();
     await expect(
       page.getByText(/Paper order (filled|submitted|placed)|Paper order placed/i).first(),
     ).toBeVisible({ timeout: 45_000 });
@@ -232,10 +233,11 @@ test.describe("A–Z desktop UI", () => {
     await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible({ timeout: 20_000 });
     await shot(page, "09-settings-ai");
 
-    for (const tab of ["Markets", "Trading", "Brokers", "Appearance", "Device / APK", "Secrets"]) {
+    for (const tab of ["Markets", "Trading", "Brokers", "Appearance", "Device / APK", "Secrets", "Backup"]) {
       await page.getByRole("button", { name: tab, exact: true }).click();
       await shot(page, `09-settings-${tab.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}`);
     }
+    await expect(page.getByText(/Backup & restore|Download backup/i).first()).toBeVisible();
 
     await page.getByRole("button", { name: "Brokers", exact: true }).click();
     await expect(page.getByText(/Zerodha|Alpaca|paper until Live/i).first()).toBeVisible();

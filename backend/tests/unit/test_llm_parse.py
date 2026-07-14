@@ -43,3 +43,25 @@ def test_demo_paper_buy_skips_paper_word() -> None:
     assert payload["tool"] == "place_paper_order"
     assert payload["arguments"]["symbol"] == "AAPL"
     assert payload["arguments"]["quantity"] == "10"
+
+
+def test_intent_price_of_aapl_is_quote_not_options() -> None:
+    from finagent.llm.router import intent_tool_json
+    import json
+
+    payload = json.loads(
+        intent_tool_json([{"role": "user", "content": "What is the price of AAPL?"}])["content"]
+    )
+    assert payload["tool"] == "get_quote"
+    assert payload["arguments"]["symbol"] == "AAPL"
+
+
+def test_intent_option_chain_still_works() -> None:
+    from finagent.llm.router import intent_tool_json
+    import json
+
+    payload = json.loads(
+        intent_tool_json([{"role": "user", "content": "Show NIFTY option chain"}])["content"]
+    )
+    assert payload["tool"] == "get_option_chain"
+    assert payload["arguments"]["symbol"] == "NIFTY"

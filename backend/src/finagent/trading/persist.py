@@ -48,8 +48,14 @@ async def load_paper_from_db(session: AsyncSession) -> None:
         qty = D(h.quantity)
         if qty == 0:
             continue
+        acquired = None
+        if getattr(h, "acquired", None):
+            try:
+                acquired = date.fromisoformat(h.acquired)
+            except ValueError:
+                acquired = None
         positions.setdefault(h.symbol.upper(), []).append(
-            Lot(quantity=qty, cost=D(h.avg_cost), acquired=None)
+            Lot(quantity=qty, cost=D(h.avg_cost), acquired=acquired)
         )
     if holdings:
         broker.account.positions = positions
@@ -93,25 +99,25 @@ async def save_paper_to_db(session: AsyncSession, broker: PaperBroker | None = N
 
     await session.execute(delete(Holding).where(Holding.account == PAPER_ACCOUNT))
     for sym, lots in broker.account.positions.items():
-        qty = sum((lot.quantity for lot in lots), D(0))
-        if qty == 0:
-            continue
-        avg = sum((lot.quantity * lot.cost for lot in lots), D(0)) / qty
         asset_class = "option" if "|" in sym else "equity"
         for order in broker.account.orders.values():
             if order.symbol == sym and order.asset_class:
                 asset_class = order.asset_class
                 break
-        session.add(
-            Holding(
-                symbol=sym,
-                asset_class=asset_class,
-                quantity=str(qty),
-                avg_cost=str(avg),
-                currency=broker.account.currency,
-                account=PAPER_ACCOUNT,
+        for lot in lots:
+            if lot.quantity == 0:
+                continue
+            session.add(
+                Holding(
+                    symbol=sym,
+                    asset_class=asset_class,
+                    quantity=str(lot.quantity),
+                    avg_cost=str(lot.cost),
+                    currency=broker.account.currency,
+                    account=PAPER_ACCOUNT,
+                    acquired=lot.acquired.isoformat() if lot.acquired else None,
+                )
             )
-        )
 
     for order in broker.account.orders.values():
         existing = (

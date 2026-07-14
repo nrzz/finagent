@@ -1,5 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { api } from "@/lib/api";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  api,
+  formatBytes,
+  formatEta,
+  streamOllamaPull,
+  type PullProgressEvent,
+} from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Badge, Card, CardContent, CardHeader, CardTitle, Input, Label } from "@/components/ui/primitives";
 import { cn } from "@/lib/utils";
@@ -77,6 +83,9 @@ export function LLMStudio({ compact = false, onActivated }: Props) {
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [pullModel, setPullModel] = useState("qwen2.5:3b");
+  const [pullProgress, setPullProgress] = useState<PullProgressEvent | null>(null);
+  const pullAbort = useRef<AbortController | null>(null);
+  const [loadedModels, setLoadedModels] = useState<string[]>([]);
   const [ollamaDetected, setOllamaDetected] = useState<{ online: boolean; models: string[] }>({
     online: false,
     models: [],
@@ -162,21 +171,346 @@ export function LLMStudio({ compact = false, onActivated }: Props) {
     if (id === "ollama" && ollamaDetected.online && ollamaDetected.models.length) {
       setDetected(ollamaDetected.models);
       const preferred =
+        ollamaDetected.models.find((m) => m.includes("qwen2.5:7b")) ||
+        ollamaDetected.models.find((m) => m.includes("7b")) ||
         ollamaDetected.models.find((m) => m.includes("qwen2.5:3b")) ||
         ollamaDetected.models.find((m) => m.includes("3b")) ||
         ollamaDetected.models[0];
       setModel(preferred);
-      setPullModel(preferred.split(":")[0] ? preferred : "qwen2.5:3b");
-      setStatus(`Detected · ${ollamaDetected.models.length} model(s) — set Demo as Fallback for safety`);
+      setPullModel("qwen2.5:7b");
+      setStatus(
+        `Detected · ${ollamaDetected.models.length} installed. Click a catalog model to install & activate in one step.`,
+      );
       return;
     }
-    setDetected([]);
+    setDetected(id === "ollama" ? ollamaDetected.models : []);
     const preset = meta.presets[0];
     setModel(preset?.model || (id === "demo" ? "demo" : ""));
     if (preset?.pull) setPullModel(preset.pull);
+    if (id === "ollama" && !ollamaDetected.online) {
+      setStatus("Ollama not detected — install from ollama.com, then click a model to auto-install.");
+    }
   }
 
-  function selectPreset(preset: ProviderMeta["presets"][0]) {
+  async function ensureDemoFallback(profiles: LLMProfile[], fallbackId: string | null) {
+    if (fallbackId) return;
+    const demo = profiles.find((p) => p.provider === "demo");
+    if (!demo) return;
+    try {
+      const res = await api<{ settings: { llm: LLMBundle & { profiles: LLMProfile[] } } }>(
+        "/api/settings/llm/activate",
+        { method: "POST", body: JSON.stringify({ profile_id: demo.id, role: "fallback" }) },
+      );
+      const llm = res.settings.llm;
+      setBundle({
+        profiles: llm.profiles,
+        active_profile_id: llm.active_profile_id,
+        fallback_profile_id: llm.fallback_profile_id,
+        chat_profile_id: llm.chat_profile_id,
+        analysis_profile_id: llm.analysis_profile_id,
+      });
+    } catch {
+      /* non-fatal */
+    }
+  }
+
+  async function saveAndActivate(
+    makeActive = true,
+    overrides?: { model?: string; name?: string },
+  ): Promise<LLMProfile | null> {
+    setBusy("save");
+    setStatus("Saving profile…");
+    const modelToSave = overrides?.model ?? model;
+    const nameToSave = overrides?.name ?? name;
+    try {
+      const res = await api<{
+        ok: boolean;
+        profile: LLMProfile;
+        settings: { llm: LLMBundle & { profiles: LLMProfile[] } };
+      }>("/api/settings/llm/profiles", {
+        method: "POST",
+        body: JSON.stringify({
+          id: editId,
+          name: nameToSave || provider?.name || "LLM",
+          provider: providerId,
+          model: providerId === "demo" ? "demo" : modelToSave,
+          base_url: baseUrl || null,
+          api_key_name: provider?.secret_name || null,
+          api_key_value: apiKey || null,
+          tool_mode: "auto",
+          make_active: makeActive,
+          make_fallback: false,
+        }),
+      });
+      setEditId(res.profile.id);
+      setApiKey("");
+      if (overrides?.model) setModel(overrides.model);
+      if (overrides?.name) setName(overrides.name);
+      const llm = res.settings.llm;
+      setBundle({
+        profiles: llm.profiles,
+        active_profile_id: llm.active_profile_id,
+        fallback_profile_id: llm.fallback_profile_id,
+        chat_profile_id: llm.chat_profile_id,
+        analysis_profile_id: llm.analysis_profile_id,
+      });
+      if (makeActive && providerId !== "demo") {
+        await ensureDemoFallback(llm.profiles, llm.fallback_profile_id);
+      }
+      setStatus(makeActive ? `Active: ${res.profile.name} (${res.profile.model})` : `Saved ${res.profile.name}`);
+      onActivated?.(res.profile);
+      return res.profile;
+    } catch (e) {
+      setStatus(e instanceof Error ? e.message : "Save failed");
+      return null;
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  // Re-attach to an in-flight Ollama pull after refresh / navigation
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await api<{
+          active?: PullProgressEvent | null;
+        }>("/api/settings/llm/ollama/pull/status");
+        if (cancelled || !res.active?.running) return;
+        const m = res.active.model;
+        setProviderId("ollama");
+        setPullModel(m);
+        setPullProgress(res.active);
+        setBusy("pull");
+        setStatus(`Reconnected to install of ${m}`);
+        const ac = new AbortController();
+        pullAbort.current = ac;
+        const last = await streamOllamaPull(
+          m,
+          baseUrl || "http://127.0.0.1:11434",
+          (ev) => {
+            if (!cancelled) setPullProgress(ev);
+          },
+          ac.signal,
+        );
+        if (cancelled) return;
+        setPullProgress(last);
+        if (last.phase === "success") {
+          setModel(m);
+          setDetected((prev) => (prev.includes(m) ? prev : [...prev, m]));
+          setStatus(`Installed ${m}. Activating…`);
+          await saveAndActivate(true, { model: m, name: `Ollama · ${m}` });
+        } else if (last.phase === "failed") {
+          setStatus(last.error || "Install failed");
+        }
+      } catch {
+        /* no active pull */
+      } finally {
+        if (!cancelled) {
+          setBusy(null);
+          pullAbort.current = null;
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // intentionally once on mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const refreshLoaded = useCallback(async () => {
+    try {
+      const res = await api<{ loaded?: { name: string }[] }>(
+        `/api/settings/llm/ollama/ps?base_url=${encodeURIComponent(baseUrl || "http://127.0.0.1:11434")}`,
+      );
+      setLoadedModels((res.loaded || []).map((m) => m.name));
+    } catch {
+      setLoadedModels([]);
+    }
+  }, [baseUrl]);
+
+  useEffect(() => {
+    if (providerId === "ollama") void refreshLoaded();
+  }, [providerId, refreshLoaded]);
+
+  /** Cancel any install, activate model, unload other models from RAM (only one resident). */
+  async function switchToInstalled(installedModel: string, label?: string) {
+    const activePull =
+      pullProgress &&
+      !["success", "failed", "cancelled"].includes(pullProgress.phase)
+        ? pullProgress.model
+        : null;
+    if (activePull && activePull !== installedModel) {
+      await cancelPull();
+    }
+    setProviderId("ollama");
+    setModel(installedModel);
+    setPullModel(installedModel);
+    const nice = label || `Ollama · ${installedModel}`;
+    setName(nice);
+    setPullProgress(null);
+    setStatus(`Switching to ${installedModel} — unloading other models from RAM…`);
+    await saveAndActivate(true, { model: installedModel, name: nice });
+    try {
+      const ex = await api<{ message?: string; unloaded?: string[]; loaded_now?: string[] }>(
+        "/api/settings/llm/ollama/exclusive",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            model: installedModel,
+            base_url: baseUrl || "http://127.0.0.1:11434",
+            warm: false,
+          }),
+        },
+      );
+      setLoadedModels(ex.loaded_now || [installedModel]);
+      setStatus(
+        ex.message ||
+          `Active: ${installedModel}. Other Ollama models unloaded so your PC stays responsive.`,
+      );
+    } catch {
+      setStatus(`Active: ${installedModel}. (Could not unload others — is Ollama running?)`);
+    }
+    await refreshLoaded();
+  }
+
+  async function cancelPull() {
+    const m = pullProgress?.model || pullModel || "*";
+    try {
+      await api("/api/settings/llm/ollama/pull/cancel", {
+        method: "POST",
+        body: JSON.stringify({ model: m === "*" ? "*" : m, base_url: baseUrl || null }),
+      });
+    } catch {
+      /* ignore */
+    }
+    pullAbort.current?.abort();
+    setPullProgress((p) =>
+      p ? { ...p, phase: "cancelled", error: "Cancelled by user", running: false } : p,
+    );
+    setBusy(null);
+    setStatus("Install cancelled");
+  }
+
+  /** One-click: pull if needed, then save & activate — only one install at a time. */
+  async function installAndActivate(targetModel: string, label: string, opts?: { replace?: boolean }) {
+    const isHuge = /70b|72b|405b|120b/i.test(targetModel);
+    if (isHuge && !window.confirm(
+      `${label} is a large model (${targetModel}). It needs substantial RAM/VRAM and a multi‑GB download. Continue?`,
+    )) {
+      return;
+    }
+    const runningOther =
+      pullProgress &&
+      pullProgress.running !== false &&
+      !["success", "failed", "cancelled"].includes(pullProgress.phase) &&
+      pullProgress.model !== targetModel;
+    let replace = opts?.replace ?? false;
+    if (runningOther && !replace) {
+      const ok = window.confirm(
+        `Only one install at a time.\n\n“${pullProgress?.model}” is installing.\nCancel it and install “${targetModel}” instead?\n\nTip: click an Installed model to switch without downloading.`,
+      );
+      if (!ok) return;
+      replace = true;
+      await cancelPull();
+    }
+
+    setBusy("pull");
+    setPullModel(targetModel);
+    setModel(targetModel);
+    setName(label);
+    setPullProgress({
+      model: targetModel,
+      phase: "starting",
+      percent: null,
+      completed_bytes: 0,
+      total_bytes: 0,
+      speed_bps: 0,
+      eta_s: null,
+      status: "Starting…",
+    });
+    setStatus(`Installing ${label}… (only one install runs at a time)`);
+    const ac = new AbortController();
+    pullAbort.current = ac;
+    try {
+      const last = await streamOllamaPull(
+        targetModel,
+        baseUrl || null,
+        (ev) => {
+          setPullProgress(ev);
+          if (ev.status === "already installed") {
+            setStatus(`${label} already installed — activating…`);
+          }
+        },
+        ac.signal,
+        { replace },
+      );
+      setPullProgress(last);
+      if (last.phase === "cancelled") {
+        setStatus("Install cancelled");
+        return;
+      }
+      if (last.phase !== "success") {
+        setStatus(
+          last.error ||
+            "Install failed. Is Ollama running? Open ollama.com/download then retry.",
+        );
+        return;
+      }
+      const installed = last.model || targetModel;
+      setModel(installed);
+      try {
+        const probeRes = await api<{ ok: boolean; models?: string[] }>("/api/settings/llm/probe", {
+          method: "POST",
+          body: JSON.stringify({
+            provider: "ollama",
+            base_url: baseUrl || "http://127.0.0.1:11434",
+          }),
+        });
+        const models = probeRes.models || [];
+        setDetected(models);
+        setOllamaDetected({ online: !!probeRes.ok, models });
+      } catch {
+        setDetected((prev) => (prev.includes(installed) ? prev : [...prev, installed]));
+      }
+      setStatus(
+        last.status === "already installed"
+          ? `Already installed — activating ${installed}`
+          : `Installed ${installed}. Activating…`,
+      );
+      await saveAndActivate(true, { model: installed, name: label });
+      setPullProgress(null);
+    } catch (e) {
+      if ((e as Error).name === "AbortError") {
+        setStatus("Install cancelled");
+      } else {
+        const msg = e instanceof Error ? e.message : "Install failed";
+        if (msg.includes("Only one install") || msg.includes("409")) {
+          setStatus(msg);
+        } else {
+          setStatus(msg);
+        }
+      }
+    } finally {
+      setBusy(null);
+      pullAbort.current = null;
+    }
+  }
+
+  async function selectPreset(preset: ProviderMeta["presets"][0]) {
+    if (providerId === "ollama") {
+      const pullName = preset.pull || preset.model;
+      const installed = detected.find(
+        (m) => m === preset.model || m === pullName || m.startsWith(`${preset.model}`) || m.startsWith(pullName),
+      );
+      if (installed) {
+        await switchToInstalled(installed, preset.label);
+        return;
+      }
+      await installAndActivate(pullName, preset.label);
+      return;
+    }
     setModel(preset.model);
     if (preset.pull) setPullModel(preset.pull);
   }
@@ -218,72 +552,7 @@ export function LLMStudio({ compact = false, onActivated }: Props) {
   }
 
   async function pull() {
-    setBusy("pull");
-    setStatus(`Pulling ${pullModel} via Ollama (can take several minutes)…`);
-    try {
-      const res = await api<{ ok: boolean; error?: string; model?: string }>(
-        "/api/settings/llm/ollama/pull",
-        {
-          method: "POST",
-          body: JSON.stringify({ model: pullModel, base_url: baseUrl || null }),
-        },
-      );
-      if (res.ok) {
-        setModel(res.model || pullModel);
-        setStatus(`Pulled ${res.model || pullModel}. Detect again to refresh the list.`);
-        await probe();
-      } else {
-        setStatus(res.error || "Pull failed");
-      }
-    } catch (e) {
-      setStatus(e instanceof Error ? e.message : "Pull failed");
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function saveAndActivate(makeActive = true): Promise<LLMProfile | null> {
-    setBusy("save");
-    setStatus("Saving profile…");
-    try {
-      const res = await api<{
-        ok: boolean;
-        profile: LLMProfile;
-        settings: { llm: LLMBundle & { profiles: LLMProfile[] } };
-      }>("/api/settings/llm/profiles", {
-        method: "POST",
-        body: JSON.stringify({
-          id: editId,
-          name: name || provider?.name || "LLM",
-          provider: providerId,
-          model: providerId === "demo" ? "demo" : model,
-          base_url: baseUrl || null,
-          api_key_name: provider?.secret_name || null,
-          api_key_value: apiKey || null,
-          tool_mode: "auto",
-          make_active: makeActive,
-          make_fallback: false,
-        }),
-      });
-      setEditId(res.profile.id);
-      setApiKey("");
-      const llm = res.settings.llm;
-      setBundle({
-        profiles: llm.profiles,
-        active_profile_id: llm.active_profile_id,
-        fallback_profile_id: llm.fallback_profile_id,
-        chat_profile_id: llm.chat_profile_id,
-        analysis_profile_id: llm.analysis_profile_id,
-      });
-      setStatus(makeActive ? `Active: ${res.profile.name} (${res.profile.model})` : `Saved ${res.profile.name}`);
-      onActivated?.(res.profile);
-      return res.profile;
-    } catch (e) {
-      setStatus(e instanceof Error ? e.message : "Save failed");
-      return null;
-    } finally {
-      setBusy(null);
-    }
+    await installAndActivate(pullModel, `Ollama · ${pullModel}`);
   }
 
   async function testCurrent() {
@@ -477,24 +746,114 @@ export function LLMStudio({ compact = false, onActivated }: Props) {
               )}
             </div>
 
+            {provider.id === "ollama" && detected.length > 0 && (
+              <div className="space-y-2">
+                <Label>Installed — only one stays in RAM</Label>
+                <p className="text-xs text-muted-foreground">
+                  Click to switch. FinAgent unloads other Ollama models from memory so your PC does not
+                  slow down. Downloaded files stay on disk.
+                </p>
+                {loadedModels.length > 1 && (
+                  <p className="text-xs text-amber-200/90">
+                    {loadedModels.length} models currently loaded in RAM — switch or click any below to
+                    free memory.
+                  </p>
+                )}
+                <div className="flex flex-wrap gap-2">
+                  {detected.map((m) => {
+                    const isActive =
+                      bundle?.active_profile_id &&
+                      bundle.profiles.find((p) => p.id === bundle.active_profile_id)?.model === m;
+                    const inRam = loadedModels.some(
+                      (l) => l === m || l.startsWith(m) || m.startsWith(l.split(":")[0]),
+                    );
+                    return (
+                    <button
+                      key={m}
+                      type="button"
+                      disabled={busy === "save"}
+                      onClick={() => void switchToInstalled(m)}
+                      className={cn(
+                        "rounded-lg border px-3 py-2 text-left text-xs transition-colors disabled:opacity-50",
+                        isActive || model === m
+                          ? "border-primary bg-primary/15"
+                          : "border-border hover:bg-accent/50",
+                      )}
+                    >
+                      <div className="font-medium flex items-center gap-1.5 flex-wrap">
+                        {m}
+                        {isActive && (
+                          <span className="text-[9px] uppercase tracking-wide text-emerald-300 border border-emerald-500/40 rounded px-1">
+                            Active
+                          </span>
+                        )}
+                        {inRam && (
+                          <span className="text-[9px] uppercase tracking-wide text-sky-200 border border-sky-500/40 rounded px-1">
+                            In RAM
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-muted-foreground mt-0.5">
+                        {isActive ? "In use · others unloaded" : "Click to run only this"}
+                      </div>
+                    </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             {provider.presets.length > 0 && provider.id !== "demo" && (
               <div className="space-y-2">
-                <Label>Model presets</Label>
+                <Label>
+                  {provider.id === "ollama"
+                    ? "Catalog — one install at a time (or switch to Installed above)"
+                    : "Model presets"}
+                </Label>
                 <div className="flex flex-wrap gap-2">
-                  {provider.presets.map((preset) => (
+                  {provider.presets.map((preset) => {
+                    const pullName = preset.pull || preset.model;
+                    const installed =
+                      provider.id !== "ollama" ||
+                      detected.some(
+                        (m) =>
+                          m === preset.model ||
+                          m === pullName ||
+                          m.startsWith(`${preset.model}`) ||
+                          m.startsWith(pullName),
+                      );
+                    return (
                     <button
                       key={preset.id}
                       type="button"
-                      onClick={() => selectPreset(preset)}
+                      disabled={
+                        busy === "save" ||
+                        busy === "test" ||
+                        busy === "probe" ||
+                        (busy === "pull" && provider.id !== "ollama")
+                      }
+                      onClick={() => void selectPreset(preset)}
                       className={cn(
-                        "rounded-lg border px-3 py-2 text-left text-xs transition-colors",
-                        model === preset.model
+                        "rounded-lg border px-3 py-2 text-left text-xs transition-colors disabled:opacity-50",
+                        model === preset.model || model === pullName
                           ? "border-primary bg-primary/15"
                           : "border-border hover:bg-accent/50",
                       )}
                     >
                       <div className="font-medium flex items-center gap-1.5 flex-wrap">
                         {preset.label}
+                        {provider.id === "ollama" && (
+                          <span
+                            className={cn(
+                              "text-[9px] uppercase tracking-wide rounded px-1 border",
+                              installed
+                                ? "text-emerald-300 border-emerald-500/40"
+                                : "text-sky-200 border-sky-500/40",
+                            )}
+                          >
+                            {installed ? "Ready" : "Click to install"}
+                          </span>
+                        )}
                         {preset.recommended_for === "finance" && (
                           <span className="text-[9px] uppercase tracking-wide text-emerald-300 border border-emerald-500/40 rounded px-1">
                             Finance
@@ -502,13 +861,26 @@ export function LLMStudio({ compact = false, onActivated }: Props) {
                         )}
                       </div>
                       <div className="text-muted-foreground mt-0.5">
-                        {preset.tier} · {preset.ram}
+                        <span
+                          className={cn(
+                            preset.tier === "flagship" && "text-amber-200",
+                            preset.tier === "high-end" && "text-sky-200",
+                          )}
+                        >
+                          {preset.tier}
+                        </span>
+                        {" · "}
+                        {preset.ram}
+                        {provider.id === "ollama" && !installed
+                          ? " · downloads then activates"
+                          : ""}
                       </div>
                       {preset.note && (
                         <div className="text-muted-foreground/80 mt-1 leading-snug">{preset.note}</div>
                       )}
                     </button>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -527,18 +899,111 @@ export function LLMStudio({ compact = false, onActivated }: Props) {
                     <option key={m} value={m} />
                   ))}
                 </datalist>
+                {provider.id === "ollama" && pullProgress && (
+                  <div className="rounded-lg border border-border bg-muted/30 p-3 space-y-2">
+                    <div className="flex items-center justify-between gap-2 text-xs">
+                      <span className="font-medium">
+                        Installing {pullProgress.model}{" "}
+                        <span className="text-muted-foreground capitalize">
+                          · {pullProgress.phase}
+                        </span>
+                        <span className="ml-1 text-muted-foreground">(only one at a time)</span>
+                      </span>
+                      {pullProgress.phase !== "success" &&
+                        pullProgress.phase !== "failed" &&
+                        pullProgress.phase !== "cancelled" && (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="h-7 px-2 text-xs"
+                            onClick={() => void cancelPull()}
+                          >
+                            Cancel
+                          </Button>
+                        )}
+                    </div>
+                    {detected.length > 0 &&
+                      pullProgress.phase !== "success" &&
+                      pullProgress.phase !== "failed" &&
+                      pullProgress.phase !== "cancelled" && (
+                        <div className="rounded-md border border-dashed border-border/80 p-2 space-y-1.5">
+                          <p className="text-[11px] text-muted-foreground">
+                            Switch to an installed model now (stops this download):
+                          </p>
+                          <div className="flex flex-wrap gap-1.5">
+                            {detected.map((m) => (
+                              <button
+                                key={m}
+                                type="button"
+                                className="rounded border border-border px-2 py-1 text-[11px] hover:bg-accent/50"
+                                onClick={() => void switchToInstalled(m)}
+                              >
+                                Use {m}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    {pullProgress.total_bytes > 0 && pullProgress.percent != null ? (
+                      <>
+                        <div className="h-2 w-full overflow-hidden rounded-full bg-border">
+                          <div
+                            className="h-full rounded-full bg-primary transition-[width] duration-300"
+                            style={{ width: `${Math.min(100, Math.max(0, pullProgress.percent))}%` }}
+                          />
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          {pullProgress.percent.toFixed(1)}% ·{" "}
+                          {formatBytes(pullProgress.completed_bytes)} /{" "}
+                          {formatBytes(pullProgress.total_bytes)}
+                          {pullProgress.speed_bps > 0 && (
+                            <> · {formatBytes(pullProgress.speed_bps)}/s</>
+                          )}
+                          {pullProgress.eta_s != null && (
+                            <> · {formatEta(pullProgress.eta_s)} left</>
+                          )}
+                        </p>
+                      </>
+                    ) : (
+                      <div className="space-y-1">
+                        <div className="h-2 w-full overflow-hidden rounded-full bg-border">
+                          <div className="h-full w-1/3 animate-pulse rounded-full bg-primary/70" />
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          {pullProgress.status || "Preparing download…"}
+                        </p>
+                      </div>
+                    )}
+                    {pullProgress.error && (
+                      <p className="text-xs text-amber-200/90">{pullProgress.error}</p>
+                    )}
+                    {(pullProgress.phase === "failed" ||
+                      pullProgress.phase === "cancelled") && (
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        className="h-8 text-xs"
+                        onClick={() =>
+                          void installAndActivate(pullProgress.model, name || pullProgress.model)
+                        }
+                      >
+                        Retry
+                      </Button>
+                    )}
+                  </div>
+                )}
               </div>
             )}
 
             {provider.id === "ollama" && (
               <div className="rounded-lg border border-dashed border-border p-3 space-y-2 bg-muted/20">
                 <Label className="text-xs uppercase tracking-wide text-muted-foreground">
-                  Install a model from here
+                  Or type a model name (install + activate)
                 </Label>
                 <div className="flex flex-col sm:flex-row gap-2">
                   <Input value={pullModel} onChange={(e) => setPullModel(e.target.value)} />
-                  <Button variant="secondary" onClick={pull} disabled={busy !== null}>
-                    {busy === "pull" ? "Pulling…" : "Pull model"}
+                  <Button variant="secondary" onClick={() => void pull()} disabled={busy !== null}>
+                    {busy === "pull" ? "Installing…" : "Install & activate"}
                   </Button>
                 </div>
               </div>

@@ -74,9 +74,5 @@ def build_reference_stubs() -> list[GatedLiveStub]:
             "Angel One",
             ["ANGEL_API_KEY", "ANGEL_CLIENT_ID", "ANGEL_PIN", "ANGEL_TOTP_SECRET"],
         ),
-        GatedLiveStub(
-            "alpaca",
-            "Alpaca",
-            ["ALPACA_API_KEY", "ALPACA_API_SECRET"],
-        ),
+        # Alpaca uses real AlpacaBroker in registry (paper API supported)
     ]

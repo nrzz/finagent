@@ -50,6 +50,9 @@ class BrokerRegistry:
 
         for stub in build_reference_stubs():
             self._adapters[stub.name] = stub
+        from finagent.brokers.alpaca import AlpacaBroker
+
+        self._adapters["alpaca"] = AlpacaBroker()
 
     def register(self, adapter: BrokerAdapter) -> None:
         self._adapters[adapter.name] = adapter
@@ -101,7 +104,8 @@ class BrokerRegistry:
         if settings.mode == TradingMode.LIVE:
             if not adapter.supports_live:
                 return {"ok": False, "error": "Selected broker does not support live trading"}
-            if settings.require_order_confirmation and not confirmed:
+            # Live orders always require confirmation (cannot be silently skipped)
+            if not confirmed:
                 return {"ok": False, "error": "Live orders require explicit confirmation"}
         else:
             # Force paper adapter in paper mode
