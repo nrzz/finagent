@@ -61,11 +61,16 @@ export function AutomationPage() {
             <Input value={threshold} onChange={(e) => setThreshold(e.target.value)} />
             <Button
               onClick={async () => {
-                await api("/api/automation/alerts", {
-                  method: "POST",
-                  body: JSON.stringify({ symbol, condition, threshold }),
-                });
-                await refresh();
+                try {
+                  await api("/api/automation/alerts", {
+                    method: "POST",
+                    body: JSON.stringify({ symbol, condition, threshold }),
+                  });
+                  setMsg("");
+                  await refresh();
+                } catch (e) {
+                  setMsg(e instanceof Error ? e.message : "Failed to add alert");
+                }
               }}
             >
               Add alert

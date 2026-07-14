@@ -40,7 +40,8 @@ export function DashboardPage() {
           <p className="text-sm text-muted-foreground">Paper book · not financial advice</p>
         </div>
         <div className="flex gap-2">
-          <Button asChild variant="secondary"><Link to="/chat">Ask the agent</Link></Button>
+          <Button asChild variant="secondary"><Link to="/">Ask the agent</Link></Button>
+
           <Button asChild><Link to="/trading">Trade</Link></Button>
         </div>
       </div>

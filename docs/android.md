@@ -1,46 +1,39 @@
-# Android APK (Capacitor)
+# Android APK — simple steps
 
-FinAgent’s UI is a PWA. For a store-style Android APK, wrap `frontend/dist` with Capacitor.
+You do **not** need an APK to use FinAgent on a phone. Same Wi‑Fi + browser is enough (see [HOW-TO-USE.md](../HOW-TO-USE.md)).
 
-## Prerequisites
+Use an APK only if you want a home-screen app icon from an installable file.
 
-- Node.js 20+
-- Android Studio (SDK + platform tools)
-- JDK 17
-- A running FinAgent backend reachable from the phone (same Wi‑Fi LAN IP, or a reverse proxy)
+## Before you start
 
-## One-time setup (from `frontend/`)
+1. FinAgent is running on your PC (`START.bat`) — note the **Phone / APK** URL it prints  
+2. [Android Studio](https://developer.android.com/studio) is installed (large one-time download)  
+3. Phone and PC are on the **same Wi‑Fi**
+
+## Build the APK (Windows)
+
+1. Double-click **`BUILD-APK.bat`** in the FinAgent folder  
+2. Wait for Android Studio to open and Gradle to finish  
+3. Menu: **Build → Build Bundle(s) / APK(s) → Build APK(s)**  
+4. Click **locate** → copy the `.apk` to your phone → install  
+5. Open FinAgent → **Settings → Device / APK** → set **API server URL** to your PC address from `START.bat`  
+   Example: `http://192.168.1.7:8000` → **Save server URL**
+
+**Android emulator:** use `http://10.0.2.2:8000` as the server URL.
+
+## Manual commands (developers)
 
 ```bash
 cd frontend
 npm install
 npm run build
-npx cap add android
-npm run cap:sync
+npx cap add android   # first time only
+npx cap sync
 npx cap open android
 ```
 
-In Android Studio: **Build → Build Bundle(s) / APK(s) → Build APK(s)**.
-
-## Point the app at your server
-
-By default the packaged app loads the built static UI and calls relative `/api` paths. For a phone on LAN:
-
-1. Set the Capacitor `server.url` in [`frontend/capacitor.config.ts`](../frontend/capacitor.config.ts) to your PC, e.g. `http://192.168.1.10:8000`, **or**
-2. Serve the built UI from the same FastAPI process (recommended for self-host): run `START.bat` / Docker and open that URL in the WebView via `server.url`.
-
-Never commit API keys, keystores, or production `.env` files. Use a local `*.keystore` ignored by git.
-
-## Scripts
-
-| Script | Purpose |
-|--------|---------|
-| `npm run build` | Production web build |
-| `npm run cap:sync` | Copy web assets into the Android project |
-| `npm run cap:open` | Open Android Studio |
-
 ## Notes
 
-- The `android/` folder is generated locally and gitignored under Capacitor paths — rebuild with `cap add` / `cap sync` on each machine.
-- PWA install from Chrome remains the zero-SDK option.
-- Same risk disclaimers apply on mobile: not financial advice; paper trading by default.
+- The `frontend/android/` folder is local (gitignored). `BUILD-APK.bat` / `cap add` creates it when needed.  
+- Never commit keystores, API keys, or `.env` files.  
+- Same risk rules as the website: not financial advice; paper trading by default.

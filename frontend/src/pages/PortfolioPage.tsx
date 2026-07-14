@@ -199,7 +199,7 @@ function AnalyticsPanel({ onDone }: { onDone: () => Promise<void> }) {
         </CardHeader>
         <CardContent className="space-y-2">
           <Label>Symbol</Label>
-          <Input value={splitSym} onChange={(e) => setSplitSym(e.target.value)} placeholder="AAPL" />
+          <Input value={splitSym} onChange={(e) => setSplitSym(e.target.value)} placeholder="Symbol for split" />
           <Button
             size="sm"
             onClick={async () => {

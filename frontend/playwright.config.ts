@@ -11,11 +11,13 @@ export default defineConfig({
   fullyParallel: false,
   retries: 0,
   workers: 1,
-  reporter: [["list"]],
+  reporter: [["list"], ["html", { open: "never", outputFolder: "e2e/playwright-report" }]],
+  outputDir: "e2e/test-results",
   use: {
     baseURL: "http://127.0.0.1:8000",
-    trace: "on-first-retry",
-    ...devices["Desktop Chrome"],
+    trace: "retain-on-failure",
+    screenshot: "only-on-failure",
+    video: "off",
   },
   webServer: {
     command: `"${path.join(root, "backend", ".venv", "Scripts", "python.exe")}" "${path.join(root, "backend", "scripts", "playwright_server.py")}"`,
@@ -24,4 +26,17 @@ export default defineConfig({
     reuseExistingServer: false,
     timeout: 120_000,
   },
+  projects: [
+    {
+      name: "desktop",
+      testMatch: /a-z-desktop\.spec\.ts/,
+      use: { ...devices["Desktop Chrome"] },
+    },
+    {
+      name: "mobile-apk",
+      testMatch: /mobile-apk\.spec\.ts/,
+      dependencies: ["desktop"],
+      use: { ...devices["Pixel 5"] },
+    },
+  ],
 });

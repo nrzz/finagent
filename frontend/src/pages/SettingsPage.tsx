@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
+import { getApiBase, setApiBase } from "@/lib/native";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, Input, Label } from "@/components/ui/primitives";
 import { LLMStudio } from "@/components/llm/LLMStudio";
@@ -17,7 +18,7 @@ type SettingsPayload = {
   };
 };
 
-type Tab = "ai" | "markets" | "trading" | "brokers" | "appearance" | "secrets";
+type Tab = "ai" | "markets" | "trading" | "brokers" | "appearance" | "device" | "secrets";
 
 export function SettingsPage() {
   const [tab, setTab] = useState<Tab>("ai");
@@ -31,6 +32,7 @@ export function SettingsPage() {
   >([]);
   const [brokerSecret, setBrokerSecret] = useState("");
   const [brokerSecretVal, setBrokerSecretVal] = useState("");
+  const [serverUrl, setServerUrl] = useState(() => getApiBase());
 
   async function load() {
     const res = await api<SettingsPayload>("/api/settings");
@@ -65,6 +67,7 @@ export function SettingsPage() {
     { id: "trading", label: "Trading" },
     { id: "brokers", label: "Brokers" },
     { id: "appearance", label: "Appearance" },
+    { id: "device", label: "Device / APK" },
     { id: "secrets", label: "Secrets" },
   ];
 
@@ -329,6 +332,53 @@ export function SettingsPage() {
             >
               Save appearance
             </Button>
+          </CardContent>
+        </Card>
+      )}
+
+      {tab === "device" && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Device / APK</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              For Android APK / Capacitor on another device, set the FinAgent server URL (e.g.{" "}
+              <span className="font-mono">http://192.168.1.10:8000</span>). Leave blank on the same
+              host as the UI (PWA / START.bat).
+            </p>
+            <div className="space-y-1">
+              <Label>API server URL</Label>
+              <Input
+                value={serverUrl}
+                onChange={(e) => setServerUrl(e.target.value)}
+                placeholder="http://192.168.1.10:8000"
+                data-testid="apk-server-url"
+              />
+            </div>
+            <div className="flex gap-2 flex-wrap">
+              <Button
+                onClick={() => {
+                  setApiBase(serverUrl.trim());
+                  setMsg(serverUrl.trim() ? `Server URL saved: ${serverUrl.trim()}` : "Using same-origin /api");
+                }}
+              >
+                Save server URL
+              </Button>
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  setServerUrl("");
+                  setApiBase("");
+                  setMsg("Cleared — same-origin /api");
+                }}
+              >
+                Clear
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Current: {getApiBase() || "(same origin)"} · cleartext LAN allowed in Capacitor config.
+            </p>
           </CardContent>
         </Card>
       )}

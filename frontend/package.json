@@ -12,6 +12,7 @@
     "typecheck": "tsc -b --noEmit",
     "generate:api": "..\\backend\\.venv\\Scripts\\python.exe ../backend/scripts/export_openapi.py && openapi-typescript openapi.json -o src/api/generated.ts",
     "test:e2e": "npm run build && playwright test",
+    "test:e2e:report": "playwright show-report e2e/playwright-report",
     "cap:sync": "npm run build && npx cap sync",
     "cap:open": "npx cap open android",
     "cap:add:android": "npx cap add android"

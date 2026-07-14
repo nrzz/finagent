@@ -23,25 +23,29 @@ export function TradingPage() {
 
   async function place() {
     setMsg("");
-    let px = price;
-    if (!px) {
-      const q = await api<{ price: string }>(`/api/market/quote/${encodeURIComponent(symbol)}`);
-      px = q.price;
-      setPrice(px);
+    try {
+      let px = price;
+      if (!px) {
+        const q = await api<{ price: string }>(`/api/market/quote/${encodeURIComponent(symbol)}`);
+        px = q.price;
+        setPrice(px);
+      }
+      const res = await api<{ ok: boolean; error?: string; order?: Record<string, unknown> }>("/api/trading/order", {
+        method: "POST",
+        body: JSON.stringify({
+          symbol,
+          side,
+          quantity: qty,
+          price: px,
+          asset_class: symbol.includes("/") ? "crypto" : "equity",
+          confirmed: true,
+        }),
+      });
+      setMsg(res.ok ? `Order ${String(res.order?.status)}` : res.error || "Failed");
+      await refresh();
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : "Order failed");
     }
-    const res = await api<{ ok: boolean; error?: string; order?: Record<string, unknown> }>("/api/trading/order", {
-      method: "POST",
-      body: JSON.stringify({
-        symbol,
-        side,
-        quantity: qty,
-        price: px,
-        asset_class: symbol.includes("/") ? "crypto" : "equity",
-        confirmed: true,
-      }),
-    });
-    setMsg(res.ok ? `Order ${String(res.order?.status)}` : res.error || "Failed");
-    await refresh();
   }
 
   return (

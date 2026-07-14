@@ -52,6 +52,10 @@ secrets/
 frontend/.playwright-data/
 frontend/test-results/
 frontend/playwright-report/
+frontend/e2e/test-results/
+frontend/e2e/playwright-report/
+frontend/e2e/artifacts/
+frontend/e2e/.auth.json
 backend/scripts/_openapi_tmp/
 backend/tests/e2e/_e2e_data/
 

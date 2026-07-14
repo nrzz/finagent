@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, Input, Label } from "@/components/ui/primitives";
@@ -46,26 +46,39 @@ export function FnoPage() {
     }
   }
 
-  useEffect(() => {
-    loadChain().catch(() => undefined);
-  }, []);
-
   async function calcGreeks() {
-    const spot = Number((await api<{ price: string }>(`/api/market/quote/${encodeURIComponent(underlying.includes(".") || underlying.startsWith("^") ? underlying : underlying + ".NS")}`).catch(() => ({ price: "0" }))).price);
-    const res = await api<Record<string, unknown>>("/api/trading/fno/greeks", {
-      method: "POST",
-      body: JSON.stringify({
-        spot: spot || 22000,
-        strike: Number(strike) || 22000,
-        t_years: 0.08,
-        iv: 0.18,
-        option_type: optType,
-        underlying: underlying.replace("^", "").replace(".NS", ""),
-        premium: Number(premium) || undefined,
-        quantity_lots: Number(lots) || 1,
-      }),
-    });
-    setGreeks(res);
+    setMsg("");
+    try {
+      let spot = 22000;
+      try {
+        const q = await api<{ price: string }>(
+          `/api/market/quote/${encodeURIComponent(
+            underlying.includes(".") || underlying.startsWith("^")
+              ? underlying
+              : `${underlying}.NS`,
+          )}`,
+        );
+        spot = Number(q.price) || 22000;
+      } catch {
+        /* illustrative fallback */
+      }
+      const res = await api<Record<string, unknown>>("/api/trading/fno/greeks", {
+        method: "POST",
+        body: JSON.stringify({
+          spot,
+          strike: Number(strike) || 22000,
+          t_years: 0.08,
+          iv: 0.18,
+          option_type: optType,
+          underlying: underlying.replace("^", "").replace(".NS", ""),
+          premium: Number(premium) || undefined,
+          quantity_lots: Number(lots) || 1,
+        }),
+      });
+      setGreeks(res);
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : "Greeks failed");
+    }
   }
 
   async function place() {

@@ -90,23 +90,25 @@ export function AppShell() {
         </footer>
       </main>
 
-      <nav className="md:hidden fixed bottom-0 inset-x-0 border-t border-border bg-card/95 backdrop-blur flex justify-around py-2 z-30 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
-        {nav.filter((i) => ["/", "/portfolio", "/markets", "/trading", "/settings"].includes(i.to)).map((item) => (
-          <NavLink
-            key={item.to}
-            to={item.to}
-            end={item.to === "/"}
-            className={({ isActive }) =>
-              cn(
-                "flex flex-col items-center gap-0.5 text-[10px] px-2 min-w-[3.25rem]",
-                isActive ? "text-primary" : "text-muted-foreground",
-              )
-            }
-          >
-            <item.icon className="h-5 w-5" />
-            {item.label}
-          </NavLink>
-        ))}
+      <nav className="md:hidden fixed bottom-0 inset-x-0 border-t border-border bg-card/95 backdrop-blur z-30 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
+        <div className="flex justify-start gap-1 overflow-x-auto px-1 py-2 scrollbar-none">
+          {nav.map((item) => (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              end={item.to === "/"}
+              className={({ isActive }) =>
+                cn(
+                  "flex flex-col items-center gap-0.5 text-[10px] px-2 min-w-[3.25rem] shrink-0",
+                  isActive ? "text-primary" : "text-muted-foreground",
+                )
+              }
+            >
+              <item.icon className="h-5 w-5" />
+              {item.label}
+            </NavLink>
+          ))}
+        </div>
       </nav>
     </div>
   );
