@@ -46,6 +46,12 @@ if not exist "android\gradlew.bat" (
   echo [2/3] Android project already present.
 )
 
+REM Same Android SDK path as open-torrent on this machine (safe to change)
+if not exist "android\local.properties" (
+  echo sdk.dir=D:\\Android\\Sdk> android\local.properties
+  echo Wrote android\local.properties -^> D:\Android\Sdk
+)
+
 echo Syncing UI into Android app...
 call npx cap sync android
 if errorlevel 1 (

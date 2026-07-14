@@ -34,6 +34,7 @@ frontend/ios/
 *.aab
 *.keystore
 *.jks
+**/local.properties
 
 # IDE / OS
 .idea/
