@@ -147,6 +147,8 @@ class PaperBroker:
                 return order
             self.account.cash += notional
             self.account.positions[order.symbol] = result.remaining_lots
+            if not result.remaining_lots:
+                self.account.positions.pop(order.symbol, None)
             self.account.realized_pnl += result.realized_pnl
             self.account.daily_realized += result.realized_pnl
 

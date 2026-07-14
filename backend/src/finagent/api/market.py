@@ -15,11 +15,13 @@ from finagent.api.auth import get_current_user
 from finagent.brokers import BrokerOrderRequest, get_broker_registry
 from finagent.data import get_market_registry
 from finagent.db import get_db
-from finagent.db.models import AuditLog, Holding, User, WatchlistItem
+from finagent.db.models import AuditLog, Cashflow, Holding, Notification, User, WatchlistItem
 from finagent.portfolio import allocation_weights
 from finagent.portfolio.money import D
+from finagent.portfolio.pnl import Lot, apply_split, avg_cost, xirr
 from finagent.scheduler import add_alert, add_job, list_alerts, list_jobs
 from finagent.trading import black_scholes_greeks, estimate_margin, get_paper_broker, lot_size
+from finagent.trading.persist import save_paper_to_db
 
 router = APIRouter(prefix="/api", tags=["market"])
 
@@ -241,6 +243,7 @@ class OrderIn(BaseModel):
     asset_class: str = "equity"
     idempotency_key: str | None = None
     confirmed: bool = False
+    meta: dict[str, Any] = Field(default_factory=dict)
 
 
 @router.get("/trading/blotter")
@@ -254,6 +257,7 @@ async def place_order(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
+    meta = {"mark_price": body.price, **(body.meta or {})}
     req = BrokerOrderRequest(
         symbol=body.symbol,
         side=body.side,
@@ -262,9 +266,10 @@ async def place_order(
         limit_price=body.price if body.order_type == "limit" else None,
         idempotency_key=body.idempotency_key,
         asset_class=body.asset_class,
-        meta={"mark_price": body.price},
+        meta=meta,
     )
     result = await get_broker_registry().place_order_safe(req, confirmed=body.confirmed)
+    await save_paper_to_db(db)
     db.add(AuditLog(actor=user.username, action="place_order", detail=result))
     await db.commit()
     return result
@@ -280,6 +285,7 @@ async def reset_paper(
     user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
 ) -> dict[str, Any]:
     get_paper_broker().reset()
+    await save_paper_to_db(db)
     db.add(AuditLog(actor=user.username, action="paper_reset", detail={}))
     await db.commit()
     return {"ok": True}
@@ -292,6 +298,9 @@ class GreeksIn(BaseModel):
     rate: float = 0.07
     iv: float = 0.2
     option_type: str = "CE"
+    underlying: str = "NIFTY"
+    premium: float | None = None
+    quantity_lots: int = 1
 
 
 @router.post("/trading/fno/greeks")
@@ -299,15 +308,65 @@ async def greeks(body: GreeksIn, user: User = Depends(get_current_user)) -> dict
     g = black_scholes_greeks(
         body.spot, body.strike, body.t_years, body.rate, body.iv, body.option_type
     )
+    lot = lot_size(body.underlying)
+    prem = D(body.premium) if body.premium is not None else D(body.spot * 0.01)
     return {
         "delta": g.delta,
         "gamma": g.gamma,
         "theta": g.theta,
         "vega": g.vega,
         "iv": g.iv,
-        "lot_size_example": lot_size("NIFTY"),
-        "margin_estimate": str(estimate_margin(D(body.spot * 0.01), lot_size("NIFTY"))),
+        "lot_size": lot,
+        "margin_estimate": str(estimate_margin(prem, lot, body.quantity_lots)),
+        "disclaimer": "Illustrative margin only — not exchange SPAN. Paper trading.",
     }
+
+
+class OptionOrderIn(BaseModel):
+    underlying: str
+    expiry: str  # YYYY-MM-DD
+    strike: str
+    option_type: str = Field(pattern="^(CE|PE)$")
+    side: str = "buy"
+    quantity_lots: int = Field(ge=1, le=100)
+    premium: str
+    confirmed: bool = False
+
+
+@router.post("/trading/fno/order")
+async def place_option_order(
+    body: OptionOrderIn,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    lot = lot_size(body.underlying)
+    qty = D(lot) * D(body.quantity_lots)
+    symbol = f"{body.underlying.upper()}|{body.expiry}|{body.strike}|{body.option_type}"
+    req = BrokerOrderRequest(
+        symbol=symbol,
+        side=body.side,
+        quantity=str(qty),
+        order_type="market",
+        limit_price=None,
+        asset_class="option",
+        meta={
+            "mark_price": body.premium,
+            "underlying": body.underlying.upper(),
+            "expiry": body.expiry,
+            "strike": body.strike,
+            "option_type": body.option_type,
+            "lot_size": lot,
+            "quantity_lots": body.quantity_lots,
+            "margin_estimate": str(
+                estimate_margin(D(body.premium), lot, body.quantity_lots)
+            ),
+        },
+    )
+    result = await get_broker_registry().place_order_safe(req, confirmed=body.confirmed)
+    await save_paper_to_db(db)
+    db.add(AuditLog(actor=user.username, action="fno_paper_order", detail=result))
+    await db.commit()
+    return result
 
 
 class AlertIn(BaseModel):
@@ -318,12 +377,12 @@ class AlertIn(BaseModel):
 
 @router.get("/automation/alerts")
 async def alerts(user: User = Depends(get_current_user)) -> dict[str, Any]:
-    return {"alerts": list_alerts()}
+    return {"alerts": await list_alerts()}
 
 
 @router.post("/automation/alerts")
 async def create_alert(body: AlertIn, user: User = Depends(get_current_user)) -> dict[str, Any]:
-    return add_alert(body.symbol, body.condition, body.threshold)
+    return await add_alert(body.symbol, body.condition, body.threshold)
 
 
 class JobIn(BaseModel):
@@ -336,12 +395,154 @@ class JobIn(BaseModel):
 
 @router.get("/automation/jobs")
 async def jobs(user: User = Depends(get_current_user)) -> dict[str, Any]:
-    return {"jobs": list_jobs()}
+    return {"jobs": await list_jobs()}
 
 
 @router.post("/automation/jobs")
 async def create_job(body: JobIn, user: User = Depends(get_current_user)) -> dict[str, Any]:
-    return add_job(body.name, body.job_type, body.cron, body.timezone, body.payload)
+    return await add_job(body.name, body.job_type, body.cron, body.timezone, body.payload)
+
+
+@router.get("/notifications")
+async def notifications(
+    user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
+) -> dict[str, Any]:
+    rows = (
+        await db.execute(select(Notification).order_by(Notification.id.desc()).limit(50))
+    ).scalars().all()
+    return {
+        "items": [
+            {
+                "id": r.id,
+                "kind": r.kind,
+                "title": r.title,
+                "body": r.body,
+                "payload": r.payload,
+                "read": r.read,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in rows
+        ]
+    }
+
+
+@router.post("/notifications/{nid}/read")
+async def mark_notification_read(
+    nid: int, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
+) -> dict[str, Any]:
+    row = await db.get(Notification, nid)
+    if not row:
+        raise HTTPException(status_code=404, detail="Not found")
+    row.read = True
+    await db.commit()
+    return {"ok": True}
+
+
+class CashflowIn(BaseModel):
+    amount: str
+    on_date: str  # YYYY-MM-DD
+    note: str | None = None
+
+
+@router.get("/portfolio/xirr")
+async def portfolio_xirr(
+    user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
+) -> dict[str, Any]:
+    from datetime import date as date_cls
+
+    rows = (await db.execute(select(Cashflow).order_by(Cashflow.on_date))).scalars().all()
+    flows = [(date_cls.fromisoformat(r.on_date), D(r.amount)) for r in rows]
+    # Append current paper equity as terminal positive cashflow for illustrative XIRR
+    paper = get_paper_broker()
+    if flows:
+        flows.append((date_cls.today(), paper.account.cash))
+    rate = xirr(flows) if len(flows) >= 2 else None
+    return {
+        "xirr_pct": str(rate) if rate is not None else None,
+        "cashflows": [
+            {"amount": r.amount, "on_date": r.on_date, "note": r.note, "id": r.id} for r in rows
+        ],
+        "note": "Not financial advice. XIRR needs invest (-) and redeem (+) cashflows.",
+    }
+
+
+@router.post("/portfolio/cashflows")
+async def add_cashflow(
+    body: CashflowIn,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    row = Cashflow(amount=str(D(body.amount)), on_date=body.on_date, note=body.note)
+    db.add(row)
+    await db.commit()
+    await db.refresh(row)
+    return {"id": row.id, "amount": row.amount, "on_date": row.on_date, "note": row.note}
+
+
+class CorpActionIn(BaseModel):
+    symbol: str
+    ratio_num: str = "2"
+    ratio_den: str = "1"
+    account: str = "default"
+
+
+@router.post("/portfolio/corporate-action")
+async def corporate_action(
+    body: CorpActionIn,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    sym = body.symbol.upper()
+    rows = (
+        await db.execute(select(Holding).where(Holding.symbol == sym, Holding.account == body.account))
+    ).scalars().all()
+    if not rows:
+        # Also apply to paper book
+        paper = get_paper_broker()
+        lots = paper.account.positions.get(sym)
+        if not lots:
+            raise HTTPException(status_code=404, detail="Holding not found")
+        paper.account.positions[sym] = apply_split(lots, D(body.ratio_num), D(body.ratio_den))
+        await save_paper_to_db(db)
+        db.add(
+            AuditLog(
+                actor=user.username,
+                action="corporate_action_split",
+                detail={"symbol": sym, "num": body.ratio_num, "den": body.ratio_den, "scope": "paper"},
+            )
+        )
+        await db.commit()
+        return {"ok": True, "scope": "paper", "symbol": sym}
+
+    for h in rows:
+        lots = [Lot(quantity=D(h.quantity), cost=D(h.avg_cost))]
+        new_lots = apply_split(lots, D(body.ratio_num), D(body.ratio_den))
+        h.quantity = str(sum((lot.quantity for lot in new_lots), D(0)))
+        h.avg_cost = str(avg_cost(new_lots))
+    db.add(
+        AuditLog(
+            actor=user.username,
+            action="corporate_action_split",
+            detail={"symbol": sym, "num": body.ratio_num, "den": body.ratio_den},
+        )
+    )
+    await db.commit()
+    return {"ok": True, "scope": "holdings", "symbol": sym}
+
+
+@router.get("/portfolio/benchmark")
+async def portfolio_benchmark(
+    symbol: str = "^NSEI",
+    period: str = "6mo",
+    user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    candles = await get_market_registry().get_history(symbol, period)
+    return {
+        "symbol": symbol,
+        "period": period,
+        "candles": candles,
+        "disclaimer": "Benchmark for comparison only. Not financial advice.",
+    }
 
 
 @router.get("/audit")

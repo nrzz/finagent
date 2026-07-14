@@ -8,6 +8,8 @@ import {
   Settings,
   Sparkles,
   Zap,
+  CandlestickChart,
+  Bell,
 } from "lucide-react";
 import { clearToken } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -20,6 +22,8 @@ const nav = [
   { to: "/portfolio", label: "Portfolio", icon: Briefcase },
   { to: "/markets", label: "Markets", icon: LineChart },
   { to: "/trading", label: "Trading", icon: Zap },
+  { to: "/fno", label: "F&O", icon: CandlestickChart },
+  { to: "/automation", label: "Auto", icon: Bell },
   { to: "/settings", label: "Settings", icon: Settings },
 ];
 
@@ -87,7 +91,7 @@ export function AppShell() {
       </main>
 
       <nav className="md:hidden fixed bottom-0 inset-x-0 border-t border-border bg-card/95 backdrop-blur flex justify-around py-2 z-30 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
-        {nav.slice(0, 5).map((item) => (
+        {nav.filter((i) => ["/", "/portfolio", "/markets", "/trading", "/settings"].includes(i.to)).map((item) => (
           <NavLink
             key={item.to}
             to={item.to}

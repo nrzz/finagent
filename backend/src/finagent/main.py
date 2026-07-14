@@ -48,7 +48,14 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         await sync_settings_from_db(session)
     loaded = await load_secrets_from_db()
     log.info("secrets_cached", count=loaded)
+    from finagent.trading.persist import load_paper_from_db
+
+    async with get_session_factory()() as session:
+        await load_paper_from_db(session)
     start_scheduler()
+    from finagent.scheduler import reload_jobs_from_db
+
+    await reload_jobs_from_db()
     log.info("finagent_started", version=__version__)
     yield
     shutdown_scheduler()

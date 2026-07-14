@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncGenerator
 from pathlib import Path
 
@@ -45,10 +46,37 @@ def get_session_factory() -> async_sessionmaker[AsyncSession]:
     return _session_factory
 
 
+def _alembic_config():
+    from alembic.config import Config
+
+    # .../backend/src/finagent/db/__init__.py -> parents[3] = backend
+    backend_root = Path(__file__).resolve().parents[3]
+    cfg = Config(str(backend_root / "alembic.ini"))
+    cfg.set_main_option("script_location", str(backend_root / "alembic"))
+    cfg.set_main_option("sqlalchemy.url", _resolve_database_url())
+    return cfg
+
+
+def run_migrations() -> None:
+    """Apply Alembic migrations (sync)."""
+    from alembic import command
+
+    command.upgrade(_alembic_config(), "head")
+
+
 async def init_db() -> None:
-    engine = get_engine()
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    """Run Alembic upgrade; ensure metadata tables exist as safety net."""
+    try:
+        await asyncio.to_thread(run_migrations)
+    except Exception:
+        engine = get_engine()
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+    else:
+        # Safety net for tables added before a new migration is written
+        engine = get_engine()
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:

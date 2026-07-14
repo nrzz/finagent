@@ -60,6 +60,8 @@ export function CommandPalette() {
               ["Portfolio", "/portfolio"],
               ["Markets", "/markets"],
               ["Trading", "/trading"],
+              ["F&O", "/fno"],
+              ["Automation", "/automation"],
               ["Settings", "/settings"],
             ].map(([label, path]) => (
               <Command.Item

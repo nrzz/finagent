@@ -46,12 +46,32 @@ class PaperBrokerAdapter(BrokerAdapter):
 class BrokerRegistry:
     def __init__(self) -> None:
         self._adapters: dict[str, BrokerAdapter] = {"paper": PaperBrokerAdapter()}
+        from finagent.brokers.stubs import build_reference_stubs
+
+        for stub in build_reference_stubs():
+            self._adapters[stub.name] = stub
 
     def register(self, adapter: BrokerAdapter) -> None:
         self._adapters[adapter.name] = adapter
 
     def list_adapters(self) -> list[dict[str, Any]]:
-        return [{"name": a.name, "supports_live": a.supports_live} for a in self._adapters.values()]
+        out = []
+        for a in self._adapters.values():
+            item: dict[str, Any] = {
+                "name": a.name,
+                "supports_live": a.supports_live,
+            }
+            if hasattr(a, "display_name"):
+                item["display_name"] = getattr(a, "display_name")
+            if hasattr(a, "secret_names"):
+                item["secret_names"] = getattr(a, "secret_names")
+            if hasattr(a, "_configured"):
+                try:
+                    item["configured"] = bool(a._configured())  # type: ignore[attr-defined]
+                except Exception:
+                    item["configured"] = False
+            out.append(item)
+        return out
 
     def get(self, name: str | None = None) -> BrokerAdapter:
         settings = get_settings().trading

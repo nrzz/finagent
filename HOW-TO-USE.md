@@ -37,6 +37,18 @@ You can also **Install** the site as an app (PWA) from the browser menu.
 
 See [`docs/android.md`](docs/android.md) to wrap the UI with Capacitor and build an APK (needs Android Studio).
 
+## Markets & paper trading
+
+- **Chat** home: ask for quotes, portfolio, or paper trades (Confirm/Cancel before fills).
+- **F&O**: option chain, illustrative greeks/margin, paper option tickets. Expired paper options are square-off’d by a daily job.
+- **Automation**: price alerts, DCA paper buys, scheduled analysis — stored in the DB; in-app notification feed (no Telegram required).
+- **Portfolio**: holdings, CSV import, XIRR cashflows, stock splits, benchmark history.
+- **Brokers** (Settings): save Zerodha / Angel / Alpaca keys encrypted. Status stays **paper only until Live** is enabled. Live mode needs re-auth; stubs still refuse real fills in this release.
+
+## AI models
+
+Default **Active = Demo** (works offline). Optional **Ollama** as Active with **Demo as Fallback** so chat keeps working if the local model is down. Cloud keys work the same way in AI Studio.
+
 ## Stop the app
 
 Close the `START.bat` window, or press `Ctrl+C` in it.

@@ -162,17 +162,42 @@ export function ToolResultCards({ tools, onConfirmOrder, onCancelOrder, confirmi
         }
 
         if (name === "get_option_chain") {
+          const calls = (result.calls as unknown[]) || [];
+          const puts = (result.puts as unknown[]) || [];
+          const expiries = (result.expiries as unknown[]) || [];
           return (
-            <div key={j} className="rounded-xl border border-border/60 bg-background/50 p-3 text-xs">
-              <div className="text-muted-foreground mb-1">Option chain</div>
-              <div className="font-mono truncate">{String(result.symbol || "underlying")}</div>
-              <div className="text-muted-foreground mt-1">
-                {Array.isArray(result.expirations)
-                  ? `${(result.expirations as unknown[]).length} expirations`
-                  : Array.isArray(result.calls)
-                    ? `${(result.calls as unknown[]).length} calls`
-                    : "See assistant summary"}
+            <div key={j} className="rounded-xl border border-border/60 bg-background/50 p-3 text-xs space-y-2">
+              <div className="text-muted-foreground">Option chain · {String(result.symbol || "")}</div>
+              <div className="font-mono">
+                Expiry {String(result.selected_expiry || "—")} · {expiries.length} listed
               </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <div className="text-muted-foreground mb-1">Calls (top)</div>
+                  {calls.slice(0, 5).map((c, i) => {
+                    const row = c as Record<string, unknown>;
+                    return (
+                      <div key={i} className="flex justify-between font-mono">
+                        <span>{String(row.strike)}</span>
+                        <span>{row.lastPrice != null ? String(row.lastPrice) : "—"}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div>
+                  <div className="text-muted-foreground mb-1">Puts (top)</div>
+                  {puts.slice(0, 5).map((c, i) => {
+                    const row = c as Record<string, unknown>;
+                    return (
+                      <div key={i} className="flex justify-between font-mono">
+                        <span>{String(row.strike)}</span>
+                        <span>{row.lastPrice != null ? String(row.lastPrice) : "—"}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+              <p className="text-[10px] text-muted-foreground">Paper analysis only. Not financial advice.</p>
             </div>
           );
         }

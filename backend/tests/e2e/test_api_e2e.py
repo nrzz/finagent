@@ -381,7 +381,143 @@ def test_fno_greeks(client: TestClient, auth: dict[str, str]) -> None:
         json={"spot": 22000, "strike": 22000, "t_years": 0.08, "iv": 0.15, "option_type": "CE"},
     )
     assert r.status_code == 200
-    assert "delta" in r.json()
+    body = r.json()
+    assert "delta" in body
+    assert "margin_estimate" in body
+    assert "lot_size" in body
+
+
+def test_fno_paper_order_and_square_off(client: TestClient, auth: dict[str, str]) -> None:
+    from datetime import date, timedelta
+
+    import anyio
+
+    from finagent.scheduler.jobs import square_off_expired_options
+
+    get_paper_broker().reset()
+    expiry = (date.today() - timedelta(days=1)).isoformat()
+    r = client.post(
+        "/api/trading/fno/order",
+        headers=auth,
+        json={
+            "underlying": "NIFTY",
+            "expiry": expiry,
+            "strike": "22000",
+            "option_type": "CE",
+            "side": "buy",
+            "quantity_lots": 1,
+            "premium": "100",
+            "confirmed": True,
+        },
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["ok"] is True
+    assert r.json()["order"]["asset_class"] == "option"
+    assert any("|" in s for s in get_paper_broker().account.positions)
+
+    closed = anyio.run(square_off_expired_options)
+    assert closed["closed"]
+    assert not get_paper_broker().account.positions
+
+
+def test_portfolio_xirr_and_corp_action(client: TestClient, auth: dict[str, str]) -> None:
+    get_paper_broker().reset()
+    client.post(
+        "/api/trading/order",
+        headers=auth,
+        json={
+            "symbol": "SPLITME",
+            "side": "buy",
+            "quantity": "10",
+            "price": "100",
+            "confirmed": True,
+        },
+    )
+    cf1 = client.post(
+        "/api/portfolio/cashflows",
+        headers=auth,
+        json={"amount": "-1000", "on_date": "2024-01-01", "note": "invest"},
+    )
+    assert cf1.status_code == 200, cf1.text
+    cf2 = client.post(
+        "/api/portfolio/cashflows",
+        headers=auth,
+        json={"amount": "200", "on_date": "2024-06-01", "note": "partial"},
+    )
+    assert cf2.status_code == 200
+    x = client.get("/api/portfolio/xirr", headers=auth)
+    assert x.status_code == 200
+    body = x.json()
+    assert "cashflows" in body
+    assert len(body["cashflows"]) >= 2
+
+    split = client.post(
+        "/api/portfolio/corporate-action",
+        headers=auth,
+        json={"symbol": "SPLITME", "ratio_num": "2", "ratio_den": "1"},
+    )
+    assert split.status_code == 200, split.text
+    assert split.json()["ok"] is True
+    lots = get_paper_broker().account.positions.get("SPLITME")
+    assert lots
+    assert sum(lot.quantity for lot in lots) == 20
+
+
+def test_automation_analysis_job_and_notifications(client: TestClient, auth: dict[str, str]) -> None:
+    j = client.post(
+        "/api/automation/jobs",
+        headers=auth,
+        json={
+            "name": "e2e-analysis",
+            "job_type": "analysis",
+            "cron": "0 8 * * 1-5",
+            "timezone": "Asia/Kolkata",
+            "payload": {"symbols": ["AAPL"]},
+        },
+    )
+    assert j.status_code == 200, j.text
+    jobs = client.get("/api/automation/jobs", headers=auth)
+    assert jobs.status_code == 200
+    assert any(row["name"] == "e2e-analysis" for row in jobs.json()["jobs"])
+
+    notes = client.get("/api/notifications", headers=auth)
+    assert notes.status_code == 200
+    assert "items" in notes.json()
+
+
+def test_paper_persists_across_reload(client: TestClient, auth: dict[str, str]) -> None:
+    import anyio
+
+    from finagent.db import get_session_factory
+    from finagent.trading.persist import load_paper_from_db, save_paper_to_db
+
+    get_paper_broker().reset()
+    r = client.post(
+        "/api/trading/order",
+        headers=auth,
+        json={
+            "symbol": "PERSIST",
+            "side": "buy",
+            "quantity": "3",
+            "price": "50",
+            "confirmed": True,
+            "idempotency_key": "persist-e2e-1",
+        },
+    )
+    assert r.status_code == 200, r.text
+    cash_before = get_paper_broker().account.cash
+
+    async def _roundtrip() -> None:
+        async with get_session_factory()() as session:
+            await save_paper_to_db(session)
+        get_paper_broker().reset()
+        assert "PERSIST" not in get_paper_broker().account.positions
+        async with get_session_factory()() as session:
+            await load_paper_from_db(session)
+
+    anyio.run(_roundtrip)
+    assert "PERSIST" in get_paper_broker().account.positions
+    assert get_paper_broker().account.cash == cash_before
 
 
 def test_brokers_list(client: TestClient, auth: dict[str, str]) -> None:
@@ -389,6 +525,7 @@ def test_brokers_list(client: TestClient, auth: dict[str, str]) -> None:
     assert r.status_code == 200
     names = [b["name"] for b in r.json()["brokers"]]
     assert "paper" in names
+    assert {"zerodha", "angel", "alpaca"}.issubset(set(names))
 
 
 def test_audit_log(client: TestClient, auth: dict[str, str]) -> None:

@@ -167,7 +167,7 @@ export function LLMStudio({ compact = false, onActivated }: Props) {
         ollamaDetected.models[0];
       setModel(preferred);
       setPullModel(preferred.split(":")[0] ? preferred : "qwen2.5:3b");
-      setStatus(`Detected · ${ollamaDetected.models.length} model(s)`);
+      setStatus(`Detected · ${ollamaDetected.models.length} model(s) — set Demo as Fallback for safety`);
       return;
     }
     setDetected([]);

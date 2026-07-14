@@ -9,6 +9,8 @@ import { PortfolioPage } from "@/pages/PortfolioPage";
 import { MarketsPage } from "@/pages/MarketsPage";
 import { TradingPage } from "@/pages/TradingPage";
 import { SettingsPage } from "@/pages/SettingsPage";
+import { FnoPage } from "@/pages/FnoPage";
+import { AutomationPage } from "@/pages/AutomationPage";
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   if (!getToken()) return <Navigate to="/login" replace />;
@@ -34,6 +36,8 @@ export default function App() {
         <Route path="portfolio" element={<PortfolioPage />} />
         <Route path="markets" element={<MarketsPage />} />
         <Route path="trading" element={<TradingPage />} />
+        <Route path="fno" element={<FnoPage />} />
+        <Route path="automation" element={<AutomationPage />} />
         <Route path="settings" element={<SettingsPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

@@ -139,13 +139,47 @@ def _demo_complete(messages: list[dict[str, Any]]) -> dict[str, Any]:
         }
 
     text = last_user.lower()
-    # Detect symbol-ish tokens
-    symbol_match = re.search(
+    # Detect symbol-ish tokens (skip command words like PAPER from "Paper-buy")
+    _skip = {
+        "PAPER",
+        "BUY",
+        "SELL",
+        "QUOTE",
+        "PRICE",
+        "SHOW",
+        "WHAT",
+        "THE",
+        "FOR",
+        "AND",
+        "GET",
+        "RUN",
+        "TOP",
+        "MY",
+        "HOW",
+        "MUCH",
+        "CHAIN",
+        "OPTION",
+        "OPTIONS",
+        "TRADE",
+        "ORDER",
+        "FROM",
+        "WITH",
+        "THIS",
+        "THAT",
+        "PLEASE",
+    }
+    candidates = re.findall(
         r"\b([A-Z]{1,10}(?:\.NS|\.BO)?|[A-Z]{2,10}/USDT|MF:\d+|BTC|ETH|AAPL|MSFT|GOOGL|RELIANCE|TCS|INFY)\b",
         last_user,
         re.I,
     )
-    symbol = symbol_match.group(1).upper() if symbol_match else None
+    symbol = None
+    for cand in candidates:
+        up = cand.upper()
+        if up in _skip:
+            continue
+        symbol = up
+        break
     if symbol in {"BTC", "ETH"}:
         symbol = f"{symbol}/USDT"
     if symbol == "RELIANCE":
@@ -336,14 +370,55 @@ class LLMRouter:
                 messages, tools=tools, model_override=model_override
             )
         except Exception as primary_exc:
+            if not allow_fallback:
+                raise
             fb = self.settings.fallback_profile_id
-            if not allow_fallback or not fb or fb == tried_id:
+            # Ultimate safety: any Demo profile if no/invalid fallback configured
+            if not fb or fb == tried_id:
+                self.refresh()
+                for p in self.settings.profiles:
+                    if p.provider == LLMProvider.DEMO and p.id != tried_id:
+                        fb = p.id
+                        break
+            if not fb or fb == tried_id:
                 raise
             log.warning("llm_primary_failed_trying_fallback", error=str(primary_exc), fallback=fb)
-            self.apply_profile(fb)
-            return await self._complete_once(
-                messages, tools=tools, model_override=model_override
-            )
+            try:
+                self.apply_profile(fb)
+                return await self._complete_once(
+                    messages, tools=tools, model_override=model_override
+                )
+            except Exception as fallback_exc:
+                # If configured fallback also fails, last resort = Demo
+                self.refresh()
+                demo_id = next(
+                    (
+                        p.id
+                        for p in self.settings.profiles
+                        if p.provider == LLMProvider.DEMO and p.id not in {tried_id, fb}
+                    ),
+                    None,
+                )
+                if demo_id is None:
+                    demo_id = next(
+                        (
+                            p.id
+                            for p in self.settings.profiles
+                            if p.provider == LLMProvider.DEMO and p.id != tried_id
+                        ),
+                        None,
+                    )
+                if not demo_id or demo_id == fb:
+                    raise fallback_exc from primary_exc
+                log.warning(
+                    "llm_fallback_failed_trying_demo",
+                    error=str(fallback_exc),
+                    demo=demo_id,
+                )
+                self.apply_profile(demo_id)
+                return await self._complete_once(
+                    messages, tools=tools, model_override=model_override
+                )
 
     async def _complete_once(
         self,

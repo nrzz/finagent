@@ -17,7 +17,7 @@ type SettingsPayload = {
   };
 };
 
-type Tab = "ai" | "markets" | "trading" | "appearance" | "secrets";
+type Tab = "ai" | "markets" | "trading" | "brokers" | "appearance" | "secrets";
 
 export function SettingsPage() {
   const [tab, setTab] = useState<Tab>("ai");
@@ -26,10 +26,21 @@ export function SettingsPage() {
   const [secretValue, setSecretValue] = useState("");
   const [msg, setMsg] = useState("");
   const [reauth, setReauth] = useState("");
+  const [brokers, setBrokers] = useState<
+    { name: string; display_name?: string; supports_live: boolean; configured?: boolean; secret_names?: string[] }[]
+  >([]);
+  const [brokerSecret, setBrokerSecret] = useState("");
+  const [brokerSecretVal, setBrokerSecretVal] = useState("");
 
   async function load() {
     const res = await api<SettingsPayload>("/api/settings");
     setData(res.settings);
+    try {
+      const b = await api<{ brokers: typeof brokers }>("/api/trading/brokers");
+      setBrokers(b.brokers);
+    } catch {
+      /* ignore */
+    }
   }
 
   useEffect(() => {
@@ -52,6 +63,7 @@ export function SettingsPage() {
     { id: "ai", label: "AI / LLMs" },
     { id: "markets", label: "Markets" },
     { id: "trading", label: "Trading" },
+    { id: "brokers", label: "Brokers" },
     { id: "appearance", label: "Appearance" },
     { id: "secrets", label: "Secrets" },
   ];
@@ -81,6 +93,67 @@ export function SettingsPage() {
       </div>
 
       {tab === "ai" && <LLMStudio />}
+
+      {tab === "brokers" && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Brokers</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              Save API keys now. Execution stays on <strong>paper</strong> until you enable Live
+              (re-auth). Stubs refuse live orders until a real plugin is implemented.
+            </p>
+            {brokers.map((b) => (
+              <div key={b.name} className="rounded-lg border p-3 space-y-2">
+                <div className="flex justify-between gap-2 text-sm">
+                  <span className="font-medium">{b.display_name || b.name}</span>
+                  <span className="text-xs text-muted-foreground">
+                    {b.name === "paper"
+                      ? "Active (paper)"
+                      : b.configured
+                        ? "Configured · paper until Live"
+                        : "Not configured"}
+                  </span>
+                </div>
+                {b.secret_names && b.secret_names.length > 0 && (
+                  <div className="flex flex-wrap gap-1">
+                    {b.secret_names.map((s) => (
+                      <button
+                        key={s}
+                        type="button"
+                        className="text-[10px] rounded border px-1.5 py-0.5 hover:bg-accent"
+                        onClick={() => setBrokerSecret(s)}
+                      >
+                        {s}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+            <div className="space-y-2 border-t pt-3">
+              <Label>Secret name</Label>
+              <Input value={brokerSecret} onChange={(e) => setBrokerSecret(e.target.value)} placeholder="ZERODHA_API_KEY" />
+              <Label>Value</Label>
+              <Input type="password" value={brokerSecretVal} onChange={(e) => setBrokerSecretVal(e.target.value)} />
+              <Button
+                onClick={async () => {
+                  await api("/api/settings/secrets", {
+                    method: "PUT",
+                    body: JSON.stringify({ name: brokerSecret, value: brokerSecretVal }),
+                  });
+                  setBrokerSecretVal("");
+                  setMsg("Broker secret stored (encrypted)");
+                  await load();
+                }}
+              >
+                Store broker secret
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {tab === "markets" && (
         <Card>

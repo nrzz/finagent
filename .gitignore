@@ -48,6 +48,13 @@ secrets/
 *.pem
 /config/config.yaml
 
+# Playwright / OpenAPI temp
+frontend/.playwright-data/
+frontend/test-results/
+frontend/playwright-report/
+backend/scripts/_openapi_tmp/
+backend/tests/e2e/_e2e_data/
+
 # Docs build
 site/
 docs/_build/

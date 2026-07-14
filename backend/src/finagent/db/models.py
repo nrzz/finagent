@@ -152,3 +152,44 @@ class JobRun(Base):
     detail: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     job: Mapped[ScheduledJob] = relationship(back_populates="runs")
+
+
+class PaperState(Base):
+    """Singleton-ish paper account cash / PnL (id=1)."""
+
+    __tablename__ = "paper_state"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    cash: Mapped[str] = mapped_column(String(64), default="1000000")
+    currency: Mapped[str] = mapped_column(String(8), default="INR")
+    realized_pnl: Mapped[str] = mapped_column(String(64), default="0")
+    daily_realized: Mapped[str] = mapped_column(String(64), default="0")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class Notification(Base):
+    """In-app notification feed (alerts, job results)."""
+
+    __tablename__ = "notifications"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    kind: Mapped[str] = mapped_column(String(32), default="alert")  # alert | job | system
+    title: Mapped[str] = mapped_column(String(256))
+    body: Mapped[str] = mapped_column(Text, default="")
+    payload: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    read: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class Cashflow(Base):
+    """Manual / imported cashflows for XIRR."""
+
+    __tablename__ = "cashflows"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    amount: Mapped[str] = mapped_column(String(64))  # negative = invest, positive = redeem
+    on_date: Mapped[str] = mapped_column(String(16))  # YYYY-MM-DD
+    note: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

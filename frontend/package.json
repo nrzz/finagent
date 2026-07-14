@@ -10,6 +10,8 @@
     "lint": "eslint .",
     "test": "vitest run",
     "typecheck": "tsc -b --noEmit",
+    "generate:api": "..\\backend\\.venv\\Scripts\\python.exe ../backend/scripts/export_openapi.py && openapi-typescript openapi.json -o src/api/generated.ts",
+    "test:e2e": "npm run build && playwright test",
     "cap:sync": "npm run build && npx cap sync",
     "cap:open": "npx cap open android",
     "cap:add:android": "npx cap add android"
@@ -46,6 +48,8 @@
     "typescript": "^5.7.2",
     "vite": "^6.0.6",
     "vite-plugin-pwa": "^0.21.2",
-    "vitest": "^2.1.8"
+    "vitest": "^2.1.8",
+    "@playwright/test": "^1.49.1",
+    "openapi-typescript": "^7.4.4"
   }
 }
