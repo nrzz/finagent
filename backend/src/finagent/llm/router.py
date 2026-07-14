@@ -22,8 +22,17 @@ log = get_logger(__name__)
 
 JSON_TOOL_SYSTEM = """You are FinAgent, a careful finance assistant.
 You MUST use only numbers that come from tool results and cite source + timestamp.
+You may ONLY use these exact tool names (never invent others like YahooFinance):
+- get_quote  arguments: {"symbol":"AAPL"} or {"symbol":"RELIANCE.NS"}
+- get_option_chain  arguments: {"symbol":"NIFTY"}
+- get_portfolio  arguments: {}
+- place_paper_order  arguments: {"symbol":"...","side":"buy|sell","quantity":"1","price":"100"}
+- run_screener  arguments: {"universe":"watchlist|india_bluechips|crypto_majors"}
+- search_symbols  arguments: {"query":"..."}
+
+For price/quote questions, call get_quote FIRST with the ticker as-is (AAPL not AAPL.NS unless India).
 When you need data or actions, reply with ONLY a JSON object:
-{"tool":"<name>","arguments":{...}}
+{"tool":"<exact_name_from_list>","arguments":{...}}
 When you can answer the user, reply with ONLY:
 {"final":"<your markdown answer>"}
 Never invent prices. Never enable live trading or change settings.
@@ -371,7 +380,9 @@ class LLMRouter:
             resp = await client.post(self._chat_url(), headers=self._headers(), json=payload)
             if resp.status_code >= 400:
                 if self.settings.provider == LLMProvider.OLLAMA:
-                    return await self._complete_ollama_native(msgs, model=model, client=client)
+                    return await self._complete_ollama_native(
+                        msgs, model=model, client=client, tools=tools
+                    )
                 resp.raise_for_status()
             data = resp.json()
 
@@ -390,20 +401,52 @@ class LLMRouter:
         return {"content": message.get("content") or "", "tool_calls": tool_calls, "raw": data}
 
     async def _complete_ollama_native(
-        self, messages: list[dict[str, Any]], *, model: str, client: httpx.AsyncClient
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        model: str,
+        client: httpx.AsyncClient,
+        tools: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         base = _endpoint(self.settings.provider, self.settings.base_url).replace("/v1", "")
-        payload = {
+        # Preserve tool / assistant tool_call messages for multi-turn tool loops
+        ollama_msgs: list[dict[str, Any]] = []
+        for m in messages:
+            role = m.get("role", "user")
+            item: dict[str, Any] = {"role": role, "content": m.get("content") or ""}
+            if m.get("tool_calls"):
+                item["tool_calls"] = m["tool_calls"]
+            if role == "tool" and m.get("tool_call_id"):
+                item["tool_call_id"] = m["tool_call_id"]
+            ollama_msgs.append(item)
+        payload: dict[str, Any] = {
             "model": model,
-            "messages": [{"role": m["role"], "content": m.get("content") or ""} for m in messages],
+            "messages": ollama_msgs,
             "stream": False,
             "options": {"temperature": self.settings.temperature},
         }
+        mode = self.effective_tool_mode()
+        if tools and mode == ToolMode.NATIVE:
+            # Ollama native tool schema (OpenAI-compatible function list)
+            payload["tools"] = tools
         resp = await client.post(f"{base}/api/chat", headers=self._headers(), json=payload)
         resp.raise_for_status()
         data = resp.json()
         msg = data.get("message") or {}
-        return {"content": msg.get("content") or "", "tool_calls": [], "raw": data}
+        tool_calls = []
+        for tc in msg.get("tool_calls") or []:
+            fn = tc.get("function") or {}
+            args = fn.get("arguments", {})
+            if isinstance(args, dict):
+                args = json.dumps(args)
+            tool_calls.append(
+                {
+                    "id": tc.get("id", "call"),
+                    "name": fn.get("name", ""),
+                    "arguments": args if isinstance(args, str) else json.dumps(args or {}),
+                }
+            )
+        return {"content": msg.get("content") or "", "tool_calls": tool_calls, "raw": data}
 
     async def _complete_anthropic(
         self,
@@ -468,13 +511,91 @@ class LLMRouter:
         messages: list[dict[str, Any]],
         *,
         model_override: str | None = None,
+        profile_id: str | None = None,
     ) -> AsyncIterator[str]:
-        # Simple non-stream fallback chunking for compatibility
-        result = await self.complete(messages, model_override=model_override)
-        content = result.get("content") or ""
-        size = 32
-        for i in range(0, len(content), size):
-            yield content[i : i + size]
+        """Yield content tokens. Uses real SSE for OpenAI-compatible endpoints."""
+        tried_id = profile_id or self.settings.chat_profile_id or self.settings.active_profile_id
+        self.apply_profile(tried_id)
+
+        if self.settings.provider in (LLMProvider.DEMO, LLMProvider.ANTHROPIC):
+            result = await self.complete(
+                messages, model_override=model_override, profile_id=tried_id, allow_fallback=True
+            )
+            content = result.get("content") or ""
+            size = 32
+            for i in range(0, len(content), size):
+                yield content[i : i + size]
+            return
+
+        model = model_override or self.settings.chat_model or self.settings.model
+        msgs = truncate_messages(
+            self._normalize_messages(messages), self.settings.max_context_tokens
+        )
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": msgs,
+            "temperature": self.settings.temperature,
+            "stream": True,
+        }
+        timeout = httpx.Timeout(self.settings.timeout_s)
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                async with client.stream(
+                    "POST", self._chat_url(), headers=self._headers(), json=payload
+                ) as resp:
+                    if resp.status_code >= 400:
+                        # Fall back to non-stream complete (may use Ollama native)
+                        text = (await resp.aread()).decode("utf-8", errors="replace")[:300]
+                        log.warning("llm_stream_http_error", status=resp.status_code, body=text)
+                        result = await self.complete(
+                            messages,
+                            model_override=model_override,
+                            profile_id=tried_id,
+                            allow_fallback=True,
+                        )
+                        content = result.get("content") or ""
+                        size = 32
+                        for i in range(0, len(content), size):
+                            yield content[i : i + size]
+                        return
+                    async for line in resp.aiter_lines():
+                        if not line:
+                            continue
+                        if line.startswith("data:"):
+                            data = line[5:].strip()
+                        else:
+                            data = line.strip()
+                        if not data or data == "[DONE]":
+                            if data == "[DONE]":
+                                break
+                            continue
+                        try:
+                            chunk = json.loads(data)
+                        except json.JSONDecodeError:
+                            continue
+                        # OpenAI-compatible delta
+                        choices = chunk.get("choices") or []
+                        if choices:
+                            delta = choices[0].get("delta") or {}
+                            piece = delta.get("content") or ""
+                            if piece:
+                                yield piece
+                            continue
+                        # Ollama native stream shape (message.content)
+                        msg = chunk.get("message") or {}
+                        piece = msg.get("content") or chunk.get("response") or ""
+                        if piece:
+                            yield piece
+        except Exception as exc:
+            log.warning("llm_stream_failed", error=str(exc))
+            # Last resort: non-stream with fallback profile
+            result = await self.complete(
+                messages, model_override=model_override, profile_id=tried_id, allow_fallback=True
+            )
+            content = result.get("content") or ""
+            size = 32
+            for i in range(0, len(content), size):
+                yield content[i : i + size]
 
     async def test_connection(self) -> dict[str, Any]:
         self.refresh()

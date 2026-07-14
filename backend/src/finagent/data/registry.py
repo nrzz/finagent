@@ -44,11 +44,13 @@ class MarketDataRegistry:
         if s.endswith(".NS") or s.endswith(".BO"):
             if "india" in self.adapters:
                 return self.adapters["india"]
-        # Prefer India for bare NSE-style names when enabled, else global
-        if "india" in self.adapters and "." not in s and s.isalpha() and len(s) <= 12:
-            return self.adapters["india"]
+            if "yfinance" in self.adapters:
+                return self.adapters["yfinance"]
+        # Bare US/global tickers (AAPL, MSFT) → yfinance; India needs .NS/.BO suffix
         if "yfinance" in self.adapters:
             return self.adapters["yfinance"]
+        if "india" in self.adapters:
+            return self.adapters["india"]
         if self.adapters:
             return next(iter(self.adapters.values()))
         raise RuntimeError("No market data adapters enabled")

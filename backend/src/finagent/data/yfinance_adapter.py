@@ -19,15 +19,34 @@ class YFinanceAdapter(MarketDataAdapter):
 
         def _fetch() -> Quote:
             t = yf.Ticker(symbol)
-            info = t.fast_info
-            price = getattr(info, "last_price", None) or getattr(info, "lastPrice", None)
+            price = None
+            currency = "USD"
+            prev = None
+            try:
+                info = t.fast_info
+                price = getattr(info, "last_price", None) or getattr(info, "lastPrice", None)
+                currency = getattr(info, "currency", None) or "USD"
+                prev = getattr(info, "previous_close", None)
+            except Exception:
+                # yfinance fast_info can raise KeyError (e.g. exchangeTimezoneName)
+                price = None
             if price is None:
                 hist = t.history(period="5d")
                 if hist.empty:
-                    raise ValueError(f"No quote for {symbol}")
-                price = float(hist["Close"].iloc[-1])
-            currency = getattr(info, "currency", None) or "USD"
-            prev = getattr(info, "previous_close", None)
+                    # one more try via info dict
+                    try:
+                        meta = t.info or {}
+                        price = meta.get("regularMarketPrice") or meta.get("currentPrice")
+                        currency = meta.get("currency") or currency
+                        prev = meta.get("regularMarketPreviousClose") or meta.get("previousClose")
+                    except Exception as exc:
+                        raise ValueError(f"No quote for {symbol}") from exc
+                    if price is None:
+                        raise ValueError(f"No quote for {symbol}")
+                else:
+                    price = float(hist["Close"].iloc[-1])
+                    if len(hist) >= 2:
+                        prev = float(hist["Close"].iloc[-2])
             change = None
             if prev:
                 change = D((float(price) - float(prev)) / float(prev) * 100)

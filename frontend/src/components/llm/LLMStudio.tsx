@@ -76,7 +76,11 @@ export function LLMStudio({ compact = false, onActivated }: Props) {
   const [detected, setDetected] = useState<string[]>([]);
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
-  const [pullModel, setPullModel] = useState("llama3.2:3b");
+  const [pullModel, setPullModel] = useState("qwen2.5:3b");
+  const [ollamaDetected, setOllamaDetected] = useState<{ online: boolean; models: string[] }>({
+    online: false,
+    models: [],
+  });
 
   const provider = useMemo(
     () => catalog.find((p) => p.id === providerId) || null,
@@ -116,16 +120,57 @@ export function LLMStudio({ compact = false, onActivated }: Props) {
     load(true).catch((e) => setStatus(e instanceof Error ? e.message : "Failed to load"));
   }, [load]);
 
+  // Silent Ollama auto-detect on mount (wizard + settings share this component)
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await api<{ ok: boolean; message?: string; models?: string[] }>(
+          "/api/settings/llm/probe",
+          {
+            method: "POST",
+            body: JSON.stringify({
+              provider: "ollama",
+              base_url: "http://127.0.0.1:11434",
+            }),
+          },
+        );
+        if (cancelled) return;
+        const models = res.models || [];
+        setOllamaDetected({ online: !!res.ok, models });
+        if (res.ok && models.length) {
+          setDetected((prev) => (prev.length ? prev : models));
+        }
+      } catch {
+        if (!cancelled) setOllamaDetected({ online: false, models: [] });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   function selectProvider(id: string) {
     const meta = catalog.find((p) => p.id === id);
     setProviderId(id);
     setEditId(null);
     setApiKey("");
-    setDetected([]);
     setStatus("");
     if (!meta) return;
     setName(meta.name);
     setBaseUrl(meta.default_base_url || "");
+    if (id === "ollama" && ollamaDetected.online && ollamaDetected.models.length) {
+      setDetected(ollamaDetected.models);
+      const preferred =
+        ollamaDetected.models.find((m) => m.includes("qwen2.5:3b")) ||
+        ollamaDetected.models.find((m) => m.includes("3b")) ||
+        ollamaDetected.models[0];
+      setModel(preferred);
+      setPullModel(preferred.split(":")[0] ? preferred : "qwen2.5:3b");
+      setStatus(`Detected · ${ollamaDetected.models.length} model(s)`);
+      return;
+    }
+    setDetected([]);
     const preset = meta.presets[0];
     setModel(preset?.model || (id === "demo" ? "demo" : ""));
     if (preset?.pull) setPullModel(preset.pull);
@@ -354,7 +399,15 @@ export function LLMStudio({ compact = false, onActivated }: Props) {
                     Best for finance
                   </Badge>
                 )}
-                {p.needs_install && <Badge className="text-[10px] font-normal">Install once</Badge>}
+                {p.id === "ollama" && ollamaDetected.online && (
+                  <Badge className="text-[10px] font-normal border-sky-500/40 text-sky-300">
+                    Detected · {ollamaDetected.models.length} model
+                    {ollamaDetected.models.length === 1 ? "" : "s"}
+                  </Badge>
+                )}
+                {p.needs_install && !(p.id === "ollama" && ollamaDetected.online) && (
+                  <Badge className="text-[10px] font-normal">Install once</Badge>
+                )}
                 {p.needs_api_key && <Badge className="text-[10px] font-normal">API key</Badge>}
                 {!p.needs_install && !p.needs_api_key && (
                   <Badge className="text-[10px] font-normal border-emerald-500/30">Ready now</Badge>

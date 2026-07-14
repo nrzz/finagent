@@ -16,15 +16,14 @@ That’s it. You never need to edit `.env` or any config file. The home screen i
 
 FinAgent is an **educational tool**, not financial advice. Markets involve risk of loss. Paper trading is on by default. Live trading stays locked until you deliberately enable it in Settings (with re-auth). You are responsible for your own decisions.
 
-## Optional later
+## Optional later — local AI (Ollama)
 
-- Install [Ollama](https://ollama.com) and connect it in **Settings → AI / LLMs**
-  - Recommended local: **Qwen2.5 7B** or **Llama 3.1 8B**
-  - Finance fine-tune: **Plutus** (`0xroyce/plutus`) — Detect → Pull → Test → Activate
-  - Models can invent numbers; FinAgent still pulls live prices from tools
-- Paste cloud API keys inside the same AI Studio flow (OpenAI, Anthropic, OpenRouter, Groq) — keys are encrypted locally
-- Add multiple profiles and set **Active** + **Fallback** so chat keeps working if one provider is down
-- Live trading stays **off** until you deliberately enable it
+1. Install [Ollama](https://ollama.com/download) (Windows / Mac / Linux).
+2. Open **Settings → AI / LLMs**. If Ollama is running, the **Ollama** card shows **Detected · N models** automatically.
+3. Click Ollama → pick an installed model (or **Pull** `qwen2.5:3b` / `qwen2.5:7b` / `0xroyce/plutus`) → **Test** → **Save & activate**.
+4. Chat uses the live local model; numbers still come from FinAgent tools (models can invent prices otherwise).
+
+Also supported: cloud keys (OpenAI, Anthropic, OpenRouter, Groq) in the same AI Studio — encrypted locally. Set **Active** + **Fallback** so chat keeps working if one provider is down.
 
 ## Phone on the same Wi‑Fi
 

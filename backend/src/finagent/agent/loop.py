@@ -76,6 +76,28 @@ class AgentLoop:
                     return {"content": answer, "tool_trace": tool_trace, "citations": citations}
                 name = str(payload.get("tool", ""))
                 args = payload.get("arguments") or {}
+                allowed = {
+                    "get_quote",
+                    "get_option_chain",
+                    "get_portfolio",
+                    "place_paper_order",
+                    "run_screener",
+                    "search_symbols",
+                }
+                if name not in allowed:
+                    messages.append({"role": "assistant", "content": json.dumps(payload)})
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                f'Unknown tool "{name}". Use ONLY one of: '
+                                + ", ".join(sorted(allowed))
+                                + '. Reply with ONLY JSON: {"tool":"get_quote","arguments":{"symbol":"..."}} '
+                                'or {"final":"..."}'
+                            ),
+                        }
+                    )
+                    continue
                 tool_result = await execute_tool(name, args)
                 tool_trace.append(tool_result)
                 await self._audit(
