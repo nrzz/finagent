@@ -20,10 +20,15 @@ export default defineConfig({
     video: "off",
   },
   webServer: {
-    command: `"${path.join(root, "backend", ".venv", "Scripts", "python.exe")}" "${path.join(root, "backend", "scripts", "playwright_server.py")}"`,
+    // Prefer an already-running FinAgent (START.bat / CI uvicorn). Cross-platform
+    // bootstrap is used only when nothing is listening on :8000.
+    command:
+      process.platform === "win32"
+        ? `"${path.join(root, "backend", ".venv", "Scripts", "python.exe")}" "${path.join(root, "backend", "scripts", "playwright_server.py")}"`
+        : `python "${path.join(root, "backend", "scripts", "playwright_server.py")}"`,
     cwd: path.join(root, "backend"),
     url: "http://127.0.0.1:8000/api/health",
-    reuseExistingServer: false,
+    reuseExistingServer: true,
     timeout: 120_000,
   },
   projects: [
