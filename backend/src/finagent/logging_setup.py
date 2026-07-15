@@ -10,11 +10,14 @@ def setup_logging(level: str = "INFO") -> None:
     logging.basicConfig(
         format="%(message)s", stream=sys.stdout, level=getattr(logging, level.upper(), logging.INFO)
     )
+    from finagent.security.log_redact import redact_event
+
     structlog.configure(
         processors=[
             structlog.contextvars.merge_contextvars,
             structlog.processors.add_log_level,
             structlog.processors.TimeStamper(fmt="iso"),
+            redact_event,
             structlog.processors.StackInfoRenderer(),
             structlog.processors.format_exc_info,
             structlog.dev.ConsoleRenderer(),

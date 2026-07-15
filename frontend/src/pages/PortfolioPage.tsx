@@ -217,6 +217,30 @@ function AnalyticsPanel({ onDone }: { onDone: () => Promise<void> }) {
           <p className="text-xs text-muted-foreground pt-2">
             Benchmark ^NSEI: {benchCount} bars loaded for comparison.
           </p>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={async () => {
+              const token = localStorage.getItem("finagent_token");
+              const res = await fetch("/api/portfolio/tax-lots.csv", {
+                headers: token ? { Authorization: `Bearer ${token}` } : {},
+              });
+              if (!res.ok) {
+                setNote("Tax lot export failed");
+                return;
+              }
+              const blob = await res.blob();
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = "finagent-tax-lots.csv";
+              a.click();
+              URL.revokeObjectURL(url);
+              setNote("Downloaded tax lots CSV (not tax advice)");
+            }}
+          >
+            Download tax lots CSV
+          </Button>
         </CardContent>
       </Card>
     </div>

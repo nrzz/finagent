@@ -28,7 +28,6 @@ from finagent.config import get_env
 
 get_env.cache_clear()
 
-from finagent.db import _engine, _session_factory  # noqa: E402
 import finagent.db as db_mod
 
 db_mod._engine = None
@@ -468,7 +467,9 @@ def test_portfolio_xirr_and_corp_action(client: TestClient, auth: dict[str, str]
     assert sum(lot.quantity for lot in lots) == 20
 
 
-def test_automation_analysis_job_and_notifications(client: TestClient, auth: dict[str, str]) -> None:
+def test_automation_analysis_job_and_notifications(
+    client: TestClient, auth: dict[str, str]
+) -> None:
     j = client.post(
         "/api/automation/jobs",
         headers=auth,
@@ -648,8 +649,9 @@ def test_demo_chat_quote_flow(client: TestClient, auth: dict[str, str]) -> None:
 
 
 def test_paper_order_requires_chat_confirmation(client: TestClient, auth: dict[str, str]) -> None:
-    from finagent.agent.tools import execute_tool
     import anyio
+
+    from finagent.agent.tools import execute_tool
 
     async def _run() -> dict:
         return await execute_tool(
@@ -781,3 +783,66 @@ def test_backup_download(client: TestClient, auth: dict[str, str]) -> None:
     r = client.get("/api/settings/backup", headers=auth)
     # DB may live under data dir — 200 or 404 if path not resolved in test
     assert r.status_code in (200, 404)
+
+
+def test_kill_switch_on_without_reauth(client: TestClient, auth: dict[str, str]) -> None:
+    r = client.put(
+        "/api/settings",
+        headers=auth,
+        json={"settings": {"trading": {"kill_switch": True}}},
+    )
+    assert r.status_code == 200
+    assert r.json()["settings"]["trading"]["kill_switch"] is True
+    # Reset so later module-scoped tests can place orders
+    off = client.put(
+        "/api/settings",
+        headers=auth,
+        json={
+            "settings": {"trading": {"kill_switch": False}},
+            "reauth_password": "password123",
+        },
+    )
+    assert off.status_code == 200
+    assert off.json()["settings"]["trading"]["kill_switch"] is False
+
+
+def test_broker_test_paper(client: TestClient, auth: dict[str, str]) -> None:
+    r = client.post("/api/settings/brokers/paper/test", headers=auth)
+    assert r.status_code == 200
+    assert r.json().get("status") == "connected"
+
+
+def test_notifications_prefs_and_test_skipped(client: TestClient, auth: dict[str, str]) -> None:
+    r = client.put(
+        "/api/settings",
+        headers=auth,
+        json={
+            "settings": {
+                "notifications": {
+                    "master_enabled": False,
+                    "telegram": {"enabled": False, "chat_id": "1"},
+                }
+            }
+        },
+    )
+    assert r.status_code == 200
+    t = client.post("/api/settings/notifications/test/telegram", headers=auth)
+    assert t.status_code == 200
+
+
+def test_audit_settings_endpoint(client: TestClient, auth: dict[str, str]) -> None:
+    r = client.get("/api/settings/audit", headers=auth)
+    assert r.status_code == 200
+    assert "items" in r.json()
+
+
+def test_mark_all_notifications_read(client: TestClient, auth: dict[str, str]) -> None:
+    r = client.post("/api/notifications/read-all", headers=auth)
+    assert r.status_code == 200
+    assert r.json().get("ok") is True
+
+
+def test_tax_lots_csv(client: TestClient, auth: dict[str, str]) -> None:
+    r = client.get("/api/portfolio/tax-lots.csv", headers=auth)
+    assert r.status_code == 200
+    assert "symbol" in r.text.splitlines()[0]

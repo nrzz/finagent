@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
@@ -63,15 +63,20 @@ class CachedAdapter(MarketDataAdapter):
     def __init__(self, inner: MarketDataAdapter, ttl_s: int = 30) -> None:
         self.inner = inner
         self.name = inner.name
+        self._ttl_s = ttl_s
         self._cache: TTLCache[str, Quote] = TTLCache(maxsize=2048, ttl=ttl_s)
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=0.5, min=0.5, max=4), reraise=True)
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=0.5, min=0.5, max=4),
+        reraise=True,
+    )
     async def get_quote(self, symbol: str) -> Quote:
         key = symbol.upper()
         if key in self._cache:
             q = self._cache[key]
-            q.stale = True
-            return q
+            age = (datetime.now(UTC) - q.as_of.astimezone(UTC)).total_seconds()
+            return replace(q, stale=age > min(self._ttl_s, 120))
         quote = await self.inner.get_quote(symbol)
         self._cache[key] = quote
         return quote

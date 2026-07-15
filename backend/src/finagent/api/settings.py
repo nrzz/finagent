@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import UTC
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -147,7 +148,15 @@ def _apply_legacy_llm_patch(settings: AppSettings, llm_patch: dict[str, Any]) ->
     settings.llm.ensure_profiles()
     if llm_patch.get("profiles"):
         return
-    legacy_keys = ("provider", "model", "base_url", "tool_mode", "timeout_s", "max_context_tokens", "temperature")
+    legacy_keys = (
+        "provider",
+        "model",
+        "base_url",
+        "tool_mode",
+        "timeout_s",
+        "max_context_tokens",
+        "temperature",
+    )
     if not any(k in llm_patch for k in legacy_keys):
         return
     active = settings.llm.get_profile(settings.llm.active_profile_id)
@@ -175,13 +184,29 @@ async def update_settings(
 ) -> dict[str, Any]:
     current = await sync_settings_from_db(db)
     merged = {**current.model_dump(mode="json"), **body.settings}
-    for key in ("llm", "markets", "trading", "appearance"):
+    for key in ("llm", "markets", "trading", "appearance", "notifications"):
         if key in body.settings and isinstance(body.settings[key], dict):
             base = current.model_dump(mode="json").get(key, {})
             patch = body.settings[key]
             # Keep existing profiles unless explicitly replaced
             if key == "llm" and "profiles" not in patch:
                 merged[key] = {**base, **{k: v for k, v in patch.items() if k != "profiles"}}
+            elif key == "notifications":
+                # Deep-merge channel dicts
+                merged_n = {
+                    **base,
+                    **{
+                        k: v
+                        for k, v in patch.items()
+                        if k not in ("telegram", "email", "webhook", "webpush", "discord", "slack")
+                    },
+                }
+                for ch in ("telegram", "email", "webhook", "webpush", "discord", "slack"):
+                    if ch in patch and isinstance(patch[ch], dict):
+                        merged_n[ch] = {**(base.get(ch) or {}), **patch[ch]}
+                    elif ch in base:
+                        merged_n[ch] = base[ch]
+                merged[key] = merged_n
             else:
                 merged[key] = {**base, **patch}
     try:
@@ -194,33 +219,41 @@ async def update_settings(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     sensitive = False
+    kill_on_only = False
+    if new_settings.trading.mode != current.trading.mode:
+        sensitive = True
     if (
-        new_settings.trading.mode != current.trading.mode
-        or new_settings.trading.kill_switch != current.trading.kill_switch
-        or new_settings.trading.require_order_confirmation
+        new_settings.trading.require_order_confirmation
         != current.trading.require_order_confirmation
     ):
         sensitive = True
+    if new_settings.trading.kill_switch != current.trading.kill_switch:
+        if new_settings.trading.kill_switch and not current.trading.kill_switch:
+            # Panic Stop ON — instant, no re-auth
+            kill_on_only = True
+        else:
+            # Turning kill switch OFF requires re-auth
+            sensitive = True
     # Live mode: confirmation cannot be turned off without step-up (already in sensitive)
     if (
         new_settings.trading.mode.value == "live"
         and not new_settings.trading.require_order_confirmation
+        and not body.reauth_password
     ):
-        # Force confirmation on for live unless they explicitly re-authed to disable
-        if not body.reauth_password:
-            new_settings.trading.require_order_confirmation = True
+        new_settings.trading.require_order_confirmation = True
     if sensitive:
-        if not body.reauth_password:
-            raise HTTPException(
-                status_code=403,
-                detail="Re-authentication required for trading mode / confirmation changes",
-            )
-        from finagent.api.auth import verify_password
+        from finagent.security.reauth import require_reauth
 
-        if not verify_password(body.reauth_password, user.password_hash):
-            raise HTTPException(status_code=403, detail="Re-authentication failed")
+        require_reauth(
+            user,
+            body.reauth_password,
+            detail="Re-authentication required for trading mode / confirmation / kill-switch-off",
+        )
 
-    await _persist(db, new_settings, user, "settings_update")
+    action = "settings_update"
+    if kill_on_only and not sensitive:
+        action = "kill_switch_on"
+    await _persist(db, new_settings, user, action)
     return {"ok": True, "settings": new_settings.public_dict()}
 
 
@@ -235,7 +268,7 @@ async def complete_wizard(
             status_code=400,
             detail="You must acknowledge the risk disclaimer before launching FinAgent",
         )
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     current = await sync_settings_from_db(db)
     merged = {**current.model_dump(mode="json"), **body.settings, "setup_complete": True}
@@ -254,7 +287,7 @@ async def complete_wizard(
     new_settings = AppSettings.model_validate(merged)
     new_settings.setup_complete = True
     new_settings.risk_acknowledged = True
-    new_settings.risk_acknowledged_at = datetime.now(timezone.utc).isoformat()
+    new_settings.risk_acknowledged_at = datetime.now(UTC).isoformat()
     from finagent.config.schema import TradingMode
 
     new_settings.trading.mode = TradingMode.PAPER
@@ -324,7 +357,9 @@ async def upsert_profile(
 
         if not verify_password(body.reauth_password, user.password_hash):
             raise HTTPException(status_code=403, detail="Re-authentication failed")
-        secret_name = secret_name or (meta or {}).get("secret_name") or f"{body.provider.upper()}_API_KEY"
+        secret_name = (
+            secret_name or (meta or {}).get("secret_name") or f"{body.provider.upper()}_API_KEY"
+        )
         cipher = encrypt_secret(body.api_key_value)
         existing = await db.execute(select(SecretRow).where(SecretRow.name == secret_name))
         row = existing.scalar_one_or_none()
@@ -437,7 +472,9 @@ async def test_llm(user: User = Depends(get_current_user)) -> dict[str, Any]:
 
 
 @router.post("/llm/test/{profile_id}")
-async def test_llm_profile(profile_id: str, user: User = Depends(get_current_user)) -> dict[str, Any]:
+async def test_llm_profile(
+    profile_id: str, user: User = Depends(get_current_user)
+) -> dict[str, Any]:
     return await get_llm_router().test_profile(profile_id)
 
 
@@ -585,14 +622,11 @@ async def upsert_secret(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    if not body.reauth_password:
-        raise HTTPException(
-            status_code=403, detail="Re-authentication required to store API secrets"
-        )
-    from finagent.api.auth import verify_password
+    from finagent.security.reauth import require_reauth
 
-    if not verify_password(body.reauth_password, user.password_hash):
-        raise HTTPException(status_code=403, detail="Re-authentication failed")
+    require_reauth(
+        user, body.reauth_password, detail="Re-authentication required to store API secrets"
+    )
     result = await db.execute(select(SecretRow).where(SecretRow.name == body.name))
     row = result.scalar_one_or_none()
     cipher = encrypt_secret(body.value)
@@ -604,6 +638,246 @@ async def upsert_secret(
     db.add(AuditLog(actor=user.username, action="secret_upsert", detail={"name": body.name}))
     await db.commit()
     return {"ok": True, "name": body.name, "masked": mask_secret(body.value)}
+
+
+class BrokerSecretIn(BaseModel):
+    name: str
+    value: str
+    reauth_password: str | None = None
+
+
+class ZerodhaTokenIn(BaseModel):
+    request_token: str
+    reauth_password: str | None = None
+
+
+class AngelLoginIn(BaseModel):
+    reauth_password: str | None = None
+
+
+class NotifyTestIn(BaseModel):
+    channel: str
+
+
+@router.post("/brokers/{name}/test")
+async def broker_test(name: str, user: User = Depends(get_current_user)) -> dict[str, Any]:
+    from finagent.brokers.registry import get_broker_registry
+
+    try:
+        adapter = get_broker_registry().get(name)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"Unknown broker {name}") from exc
+    result = await adapter.healthcheck()
+    return result
+
+
+@router.post("/brokers/zerodha/exchange-token")
+async def zerodha_exchange_token(
+    body: ZerodhaTokenIn,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    from finagent.brokers.zerodha import ZerodhaBroker
+    from finagent.security.reauth import require_reauth
+
+    require_reauth(user, body.reauth_password)
+    broker = ZerodhaBroker()
+    data = await broker.exchange_request_token(body.request_token.strip())
+    access = data["access_token"]
+    cipher = encrypt_secret(access)
+    result = await db.execute(select(SecretRow).where(SecretRow.name == "ZERODHA_ACCESS_TOKEN"))
+    row = result.scalar_one_or_none()
+    if row:
+        row.ciphertext = cipher
+    else:
+        db.add(SecretRow(name="ZERODHA_ACCESS_TOKEN", ciphertext=cipher))
+    cache_secret("ZERODHA_ACCESS_TOKEN", access)
+    db.add(
+        AuditLog(
+            actor=user.username,
+            action="zerodha_token_exchange",
+            detail={"user": data.get("user")},
+        )
+    )
+    await db.commit()
+    return {"ok": True, "masked": mask_secret(access), "login_user": data.get("user")}
+
+
+@router.post("/brokers/angel/login")
+async def angel_login(
+    body: AngelLoginIn,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    from finagent.brokers.angel import AngelBroker
+    from finagent.security.reauth import require_reauth
+
+    require_reauth(user, body.reauth_password)
+    broker = AngelBroker()
+    data = await broker.login()
+    for key, val in (
+        ("ANGEL_JWT_TOKEN", data["jwt_token"]),
+        ("ANGEL_FEED_TOKEN", data.get("feed_token") or ""),
+    ):
+        if not val:
+            continue
+        cipher = encrypt_secret(val)
+        result = await db.execute(select(SecretRow).where(SecretRow.name == key))
+        row = result.scalar_one_or_none()
+        if row:
+            row.ciphertext = cipher
+        else:
+            db.add(SecretRow(name=key, ciphertext=cipher))
+        cache_secret(key, val)
+    db.add(AuditLog(actor=user.username, action="angel_login", detail={}))
+    await db.commit()
+    return {"ok": True, "client_code": data.get("client_code")}
+
+
+@router.post("/brokers/{name}/sync-holdings")
+async def sync_broker_holdings(
+    name: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Import broker holdings into the manual holdings book (tagged with source)."""
+    from datetime import date
+
+    from finagent.brokers.registry import get_broker_registry
+    from finagent.db.models import Holding
+
+    try:
+        adapter = get_broker_registry().get(name)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    rows = await adapter.get_holdings()
+    imported = 0
+    for r in rows:
+        sym = str(r.get("symbol") or "").strip()
+        if not sym:
+            continue
+        qty = str(r.get("qty") or r.get("quantity") or "0")
+        avg = str(r.get("avg_entry_price") or r.get("average_price") or "0")
+        existing = (
+            await db.execute(select(Holding).where(Holding.symbol == sym))
+        ).scalar_one_or_none()
+        if existing:
+            existing.quantity = qty
+            existing.avg_cost = avg
+        else:
+            db.add(
+                Holding(
+                    symbol=sym,
+                    quantity=qty,
+                    avg_cost=avg,
+                    asset_class="equity",
+                    acquired=date.today().isoformat(),
+                    notes=f"synced:{name}",
+                )
+            )
+        imported += 1
+    db.add(
+        AuditLog(
+            actor=user.username,
+            action="broker_sync_holdings",
+            detail={"broker": name, "count": imported},
+        )
+    )
+    await db.commit()
+    return {"ok": True, "imported": imported, "holdings": rows}
+
+
+@router.post("/notifications/test/{channel}")
+async def notifications_test(
+    channel: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    from finagent.notify import test_channel
+
+    # Temporarily allow test even if master off by enabling path in dispatcher via kind system
+    settings = await sync_settings_from_db(db)
+    # Force master for test path: call channel send via temporary override
+    prev = settings.notifications.master_enabled
+    settings.notifications.master_enabled = True
+    set_settings(settings)
+    try:
+        result = await test_channel(channel)
+    finally:
+        settings.notifications.master_enabled = prev
+        set_settings(settings)
+    db.add(
+        AuditLog(
+            actor=user.username,
+            action="notify_test",
+            detail={"channel": channel, "ok": result.get("ok")},
+        )
+    )
+    await db.commit()
+    return result
+
+
+@router.post("/notifications/vapid/generate")
+async def generate_vapid(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Generate local VAPID keypair; private key stored encrypted."""
+
+    # Use cryptography to make a simple EC key — or fallback message
+    try:
+        import base64
+
+        from cryptography.hazmat.primitives.asymmetric import ec
+
+        priv = ec.generate_private_key(ec.SECP256R1())
+        priv_bytes = priv.private_numbers().private_value.to_bytes(32, "big")
+        pub = priv.public_key().public_numbers()
+        # Uncompressed point
+        x = pub.x.to_bytes(32, "big")
+        y = pub.y.to_bytes(32, "big")
+        pub_raw = b"\x04" + x + y
+        priv_b64 = base64.urlsafe_b64encode(priv_bytes).decode().rstrip("=")
+        pub_b64 = base64.urlsafe_b64encode(pub_raw).decode().rstrip("=")
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"VAPID generate failed: {exc}") from exc
+
+    cipher = encrypt_secret(priv_b64)
+    result = await db.execute(select(SecretRow).where(SecretRow.name == "VAPID_PRIVATE_KEY"))
+    row = result.scalar_one_or_none()
+    if row:
+        row.ciphertext = cipher
+    else:
+        db.add(SecretRow(name="VAPID_PRIVATE_KEY", ciphertext=cipher))
+    cache_secret("VAPID_PRIVATE_KEY", priv_b64)
+
+    settings = await sync_settings_from_db(db)
+    settings.notifications.webpush.vapid_public_key = pub_b64
+    settings.notifications.webpush.vapid_private_secret = "VAPID_PRIVATE_KEY"
+    await _persist(db, settings, user, "vapid_generate")
+    return {"ok": True, "vapid_public_key": pub_b64}
+
+
+@router.get("/audit")
+async def settings_audit(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    rows = (
+        (await db.execute(select(AuditLog).order_by(AuditLog.id.desc()).limit(100))).scalars().all()
+    )
+    return {
+        "items": [
+            {
+                "id": r.id,
+                "actor": r.actor,
+                "action": r.action,
+                "detail": r.detail,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in rows
+        ]
+    }
 
 
 @router.get("/export")

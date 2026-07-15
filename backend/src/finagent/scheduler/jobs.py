@@ -32,10 +32,19 @@ def get_scheduler() -> AsyncIOScheduler:
 
 async def _notify(kind: str, title: str, body: str, payload: dict[str, Any] | None = None) -> None:
     async with get_session_factory()() as session:
-        session.add(
-            Notification(kind=kind, title=title, body=body, payload=payload or {})
-        )
+        session.add(Notification(kind=kind, title=title, body=body, payload=payload or {}))
         await session.commit()
+    try:
+        from finagent.notify import dispatch_notification
+
+        await dispatch_notification(
+            kind=kind,
+            title=title,
+            body=body,
+            symbol=(payload or {}).get("symbol") if payload else None,
+        )
+    except Exception as exc:
+        log.warning("external_notify_failed", error=str(exc))
 
 
 async def scan_alerts() -> dict[str, Any]:
@@ -44,8 +53,14 @@ async def scan_alerts() -> dict[str, Any]:
 
     cooldown = timedelta(minutes=60)
     triggered: list[dict[str, Any]] = []
+    scanned = 0
     async with get_session_factory()() as session:
-        rules = (await session.execute(select(AlertRule).where(AlertRule.active.is_(True)))).scalars().all()
+        rules = (
+            (await session.execute(select(AlertRule).where(AlertRule.active.is_(True))))
+            .scalars()
+            .all()
+        )
+        scanned = len(rules)
         for rule in rules:
             try:
                 q = await get_market_registry().get_quote(rule.symbol)
@@ -82,8 +97,21 @@ async def scan_alerts() -> dict[str, Any]:
                 log.info("alert_triggered", **event)
             except Exception as exc:
                 log.warning("alert_scan_error", error=str(exc), symbol=rule.symbol)
+            scanned = len(rules)
         await session.commit()
-        return {"triggered": triggered, "scanned": len(rules)}
+    for event in triggered:
+        try:
+            from finagent.notify import dispatch_notification
+
+            await dispatch_notification(
+                kind="alert",
+                title=f"Alert: {event['symbol']} {event['condition']} {event['threshold']}",
+                body=f"Price {event['price']} ({event['source']})",
+                symbol=event.get("symbol"),
+            )
+        except Exception as exc:
+            log.warning("alert_external_notify_failed", error=str(exc))
+    return {"triggered": triggered, "scanned": scanned}
 
 
 async def run_dca_job(payload: dict[str, Any]) -> dict[str, Any]:
@@ -120,7 +148,9 @@ async def scheduled_analysis(payload: dict[str, Any]) -> dict[str, Any]:
         if "error" in q:
             summary += f"- {q['symbol']}: error {q['error']}\n"
         else:
-            summary += f"- {q.get('symbol')}: {q.get('price')} ({q.get('source')}) @ {q.get('as_of')}\n"
+            summary += (
+                f"- {q.get('symbol')}: {q.get('price')} ({q.get('source')}) @ {q.get('as_of')}\n"
+            )
     try:
         from finagent.agent.loop import AgentLoop
 
@@ -216,7 +246,9 @@ async def add_alert(symbol: str, condition: str, threshold: str) -> dict[str, An
 
 async def list_alerts() -> list[dict[str, Any]]:
     async with get_session_factory()() as session:
-        rows = (await session.execute(select(AlertRule).order_by(AlertRule.id.desc()))).scalars().all()
+        rows = (
+            (await session.execute(select(AlertRule).order_by(AlertRule.id.desc()))).scalars().all()
+        )
         return [
             {
                 "id": r.id,
@@ -224,7 +256,9 @@ async def list_alerts() -> list[dict[str, Any]]:
                 "condition": r.condition,
                 "threshold": r.threshold,
                 "active": r.active,
-                "last_triggered_at": r.last_triggered_at.isoformat() if r.last_triggered_at else None,
+                "last_triggered_at": r.last_triggered_at.isoformat()
+                if r.last_triggered_at
+                else None,
                 "created_at": r.created_at.isoformat() if r.created_at else None,
             }
             for r in rows
@@ -292,13 +326,71 @@ async def list_jobs() -> list[dict[str, Any]]:
                     "last_run": {
                         "status": last.status,
                         "detail": last.detail,
-                        "created_at": last.created_at.isoformat() if last and last.created_at else None,
+                        "created_at": last.created_at.isoformat()
+                        if last and last.created_at
+                        else None,
                     }
                     if last
                     else None,
                 }
             )
         return out
+
+
+async def _find_job(session: Any, job_id_or_name: str) -> ScheduledJob | None:
+    if job_id_or_name.isdigit():
+        row = await session.get(ScheduledJob, int(job_id_or_name))
+        if row:
+            return row
+    return (
+        await session.execute(select(ScheduledJob).where(ScheduledJob.name == job_id_or_name))
+    ).scalar_one_or_none()
+
+
+def _unschedule_job(name: str) -> None:
+    sched = get_scheduler()
+    try:
+        if sched.get_job(name):
+            sched.remove_job(name)
+    except Exception as exc:
+        log.warning("job_unschedule_failed", name=name, error=str(exc))
+
+
+async def delete_job(job_id_or_name: str) -> dict[str, Any]:
+    async with get_session_factory()() as session:
+        job = await _find_job(session, job_id_or_name)
+        if not job:
+            return {"ok": False, "error": "Job not found"}
+        name = job.name
+        runs = (
+            (await session.execute(select(JobRun).where(JobRun.job_id == job.id))).scalars().all()
+        )
+        for run in runs:
+            await session.delete(run)
+        await session.delete(job)
+        await session.commit()
+        _unschedule_job(name)
+        return {"ok": True, "name": name}
+
+
+async def toggle_job(job_id_or_name: str) -> dict[str, Any]:
+    async with get_session_factory()() as session:
+        job = await _find_job(session, job_id_or_name)
+        if not job:
+            return {"ok": False, "error": "Job not found"}
+        job.enabled = not job.enabled
+        await session.commit()
+        await session.refresh(job)
+        if job.enabled:
+            _schedule_job_row(job)
+        else:
+            _unschedule_job(job.name)
+        return {
+            "ok": True,
+            "id": job.id,
+            "name": job.name,
+            "enabled": job.enabled,
+        }
 
 
 def _schedule_job_row(job: ScheduledJob) -> None:
@@ -338,8 +430,10 @@ def _schedule_job_row(job: ScheduledJob) -> None:
 async def reload_jobs_from_db() -> None:
     async with get_session_factory()() as session:
         rows = (
-            await session.execute(select(ScheduledJob).where(ScheduledJob.enabled.is_(True)))
-        ).scalars().all()
+            (await session.execute(select(ScheduledJob).where(ScheduledJob.enabled.is_(True))))
+            .scalars()
+            .all()
+        )
         for job in rows:
             try:
                 _schedule_job_row(job)

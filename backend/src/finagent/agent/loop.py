@@ -58,7 +58,18 @@ class AgentLoop:
 
         for iteration in range(max_iters):
             if mode == ToolMode.JSON_FALLBACK:
-                result = await router.complete(messages)
+                try:
+                    result = await router.complete(messages)
+                except Exception as exc:
+                    log.error(
+                        "llm_complete_failed",
+                        mode="json-fallback",
+                        iteration=iteration,
+                        error=str(exc),
+                    )
+                    msg = f"Sorry — the AI provider failed: {exc}"
+                    await self._audit("agent_error", {"error": str(exc)})
+                    return {"content": msg, "tool_trace": tool_trace, "citations": citations}
                 payload = parse_json_tool_payload(result.get("content") or "")
                 if not payload:
                     # Local models often ignore JSON instructions — rescue with intent router.
@@ -123,7 +134,9 @@ class AgentLoop:
                     r = tool_result["result"]
                     if "source" in r or "as_of" in r:
                         citations.append(r)
-                messages.append({"role": "assistant", "content": json.dumps({"tool": name, "arguments": args})})
+                messages.append(
+                    {"role": "assistant", "content": json.dumps({"tool": name, "arguments": args})}
+                )
                 messages.append(
                     {
                         "role": "user",
@@ -133,7 +146,13 @@ class AgentLoop:
                 continue
 
             # Native tool calling
-            result = await router.complete(messages, tools=TOOLS_SCHEMA)
+            try:
+                result = await router.complete(messages, tools=TOOLS_SCHEMA)
+            except Exception as exc:
+                log.error("llm_complete_failed", mode="native", iteration=iteration, error=str(exc))
+                msg = f"Sorry — the AI provider failed: {exc}"
+                await self._audit("agent_error", {"error": str(exc)})
+                return {"content": msg, "tool_trace": tool_trace, "citations": citations}
             tool_calls = result.get("tool_calls") or []
             if not tool_calls:
                 content = result.get("content") or ""
@@ -207,7 +226,21 @@ class AgentLoop:
         for iteration in range(max_iters):
             yield {"type": "status", "message": f"Step {iteration + 1}…"}
             if mode == ToolMode.JSON_FALLBACK:
-                result = await router.complete(messages)
+                try:
+                    result = await router.complete(messages)
+                except Exception as exc:
+                    log.error(
+                        "llm_complete_failed",
+                        mode="json-fallback",
+                        iteration=iteration,
+                        error=str(exc),
+                    )
+                    yield {
+                        "type": "error",
+                        "message": f"Sorry — the AI provider failed: {exc}",
+                    }
+                    yield {"type": "done"}
+                    return
                 payload = parse_json_tool_payload(result.get("content") or "")
                 if not payload:
                     rescue = intent_tool_json(messages)
@@ -279,7 +312,16 @@ class AgentLoop:
                 )
                 continue
 
-            result = await router.complete(messages, tools=TOOLS_SCHEMA)
+            try:
+                result = await router.complete(messages, tools=TOOLS_SCHEMA)
+            except Exception as exc:
+                log.error("llm_complete_failed", mode="native", iteration=iteration, error=str(exc))
+                yield {
+                    "type": "error",
+                    "message": f"Sorry — the AI provider failed: {exc}",
+                }
+                yield {"type": "done"}
+                return
             tool_calls = result.get("tool_calls") or []
             if not tool_calls:
                 content = result.get("content") or ""

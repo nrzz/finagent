@@ -46,8 +46,9 @@ def test_demo_paper_buy_skips_paper_word() -> None:
 
 
 def test_intent_price_of_aapl_is_quote_not_options() -> None:
-    from finagent.llm.router import intent_tool_json
     import json
+
+    from finagent.llm.router import intent_tool_json
 
     payload = json.loads(
         intent_tool_json([{"role": "user", "content": "What is the price of AAPL?"}])["content"]
@@ -57,8 +58,9 @@ def test_intent_price_of_aapl_is_quote_not_options() -> None:
 
 
 def test_intent_option_chain_still_works() -> None:
-    from finagent.llm.router import intent_tool_json
     import json
+
+    from finagent.llm.router import intent_tool_json
 
     payload = json.loads(
         intent_tool_json([{"role": "user", "content": "Show NIFTY option chain"}])["content"]

@@ -5,17 +5,16 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-
-import uvicorn
 from typing import Any
 
+import uvicorn
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from finagent import __version__
-from finagent.api import auth, chat, market
+from finagent.api import auth, backtest, chat, market
 from finagent.api import settings as settings_api
 from finagent.bootstrap import ensure_runtime_env
 from finagent.config import ensure_data_dir, get_env, load_yaml_overlay, set_settings
@@ -71,7 +70,7 @@ def create_app() -> FastAPI:
 
     try:
         assert_secure_keys()
-    except RuntimeError as exc:
+    except RuntimeError:
         # Allow pytest / CI with env flag; otherwise fail closed
         import os
 
@@ -116,6 +115,7 @@ def create_app() -> FastAPI:
     app.include_router(settings_api.router)
     app.include_router(chat.router)
     app.include_router(market.router)
+    app.include_router(backtest.router)
 
     @app.get("/api/health")
     async def health() -> dict[str, str]:
@@ -140,8 +140,12 @@ def create_app() -> FastAPI:
             checks["scheduler"] = "ok" if sched and sched.running else "stopped"
         except Exception as exc:
             checks["scheduler"] = f"error: {exc}"
-        ok = checks.get("database") == "ok"
-        payload = {"status": "ready" if ok else "degraded", "version": __version__, "checks": checks}
+        ok = checks.get("database") == "ok" and checks.get("scheduler") == "ok"
+        payload = {
+            "status": "ready" if ok else "degraded",
+            "version": __version__,
+            "checks": checks,
+        }
         if not ok:
             return JSONResponse(status_code=503, content=payload)
         return payload

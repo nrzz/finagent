@@ -99,11 +99,30 @@ export function AppShell() {
       </aside>
 
       <main className="flex-1 overflow-auto pb-24 md:pb-10 flex flex-col min-h-0">
-        <header className="sticky top-0 z-20 border-b border-border bg-background/80 backdrop-blur px-4 py-3 flex items-center justify-between shrink-0">
+        <header className="sticky top-0 z-20 border-b border-border bg-background/80 backdrop-blur px-4 py-3 flex items-center justify-between shrink-0 gap-2">
           <div className="text-sm text-muted-foreground">
             Press <kbd className="px-1.5 py-0.5 rounded border text-xs">Ctrl K</kbd> to search
           </div>
-          <CommandPalette />
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="destructive"
+              title="Blocks all orders instantly"
+              onClick={async () => {
+                try {
+                  await api("/api/settings", {
+                    method: "PUT",
+                    body: JSON.stringify({ settings: { trading: { kill_switch: true } } }),
+                  });
+                } catch {
+                  /* ignore */
+                }
+              }}
+            >
+              Panic Stop
+            </Button>
+            <CommandPalette />
+          </div>
         </header>
         <div className="p-3 md:p-6 max-w-7xl mx-auto w-full flex-1">
           <Outlet />

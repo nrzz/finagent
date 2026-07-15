@@ -19,11 +19,10 @@ _MARKET_HOURS = {
 def is_crypto_market(symbol: str | None = None, asset_class: str | None = None) -> bool:
     if asset_class == "crypto":
         return True
-    if symbol and (
-        "/" in symbol or symbol.upper().endswith("USDT") or symbol.upper().endswith("-USD")
-    ):
-        return True
-    return False
+    return bool(
+        symbol
+        and ("/" in symbol or symbol.upper().endswith("USDT") or symbol.upper().endswith("-USD"))
+    )
 
 
 def is_market_open(

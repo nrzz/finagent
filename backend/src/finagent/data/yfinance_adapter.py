@@ -101,10 +101,21 @@ class YFinanceAdapter(MarketDataAdapter):
                 return {"symbol": symbol, "expiries": [], "chains": {}}
             expiry = dates[0]
             chain = t.option_chain(expiry)
+
             def _df(df: Any) -> list[dict[str, Any]]:
-                cols = ["contractSymbol", "strike", "lastPrice", "bid", "ask", "impliedVolatility", "volume", "openInterest"]
+                cols = [
+                    "contractSymbol",
+                    "strike",
+                    "lastPrice",
+                    "bid",
+                    "ask",
+                    "impliedVolatility",
+                    "volume",
+                    "openInterest",
+                ]
                 present = [c for c in cols if c in df.columns]
                 return df[present].head(50).to_dict(orient="records")
+
             return {
                 "symbol": symbol.upper(),
                 "source": self.name,

@@ -50,14 +50,18 @@ class CCXTAdapter(MarketDataAdapter):
                 as_of=datetime.now(UTC),
                 bid=D(ticker["bid"]) if ticker.get("bid") else None,
                 ask=D(ticker["ask"]) if ticker.get("ask") else None,
-                change_pct=D(ticker["percentage"]) if ticker.get("percentage") is not None else None,
+                change_pct=D(ticker["percentage"])
+                if ticker.get("percentage") is not None
+                else None,
                 meta={"exchange": self.exchange_id},
             )
 
         return await asyncio.to_thread(_fetch)
 
     async def search(self, query: str) -> list[dict[str, str]]:
-        return [{"symbol": self._normalize(query), "name": self._normalize(query), "source": self.name}]
+        return [
+            {"symbol": self._normalize(query), "name": self._normalize(query), "source": self.name}
+        ]
 
     async def get_history(self, symbol: str, period: str = "1mo") -> list[dict[str, Any]]:
         import asyncio

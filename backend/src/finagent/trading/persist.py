@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import Any
 
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,7 +12,7 @@ from finagent.logging_setup import get_logger
 from finagent.portfolio.money import D
 from finagent.portfolio.pnl import Lot
 from finagent.trading.orders import Order, OrderSide, OrderStatus, OrderType
-from finagent.trading.paper import PaperAccount, PaperBroker, get_paper_broker
+from finagent.trading.paper import PaperBroker, get_paper_broker
 
 log = get_logger(__name__)
 
@@ -22,7 +21,9 @@ PAPER_ACCOUNT = "paper"
 
 async def load_paper_from_db(session: AsyncSession) -> None:
     broker = get_paper_broker()
-    state = (await session.execute(select(PaperState).where(PaperState.id == 1))).scalar_one_or_none()
+    state = (
+        await session.execute(select(PaperState).where(PaperState.id == 1))
+    ).scalar_one_or_none()
     if state:
         broker.account.cash = D(state.cash)
         broker.account.currency = state.currency
@@ -41,8 +42,10 @@ async def load_paper_from_db(session: AsyncSession) -> None:
         await session.commit()
 
     holdings = (
-        await session.execute(select(Holding).where(Holding.account == PAPER_ACCOUNT))
-    ).scalars().all()
+        (await session.execute(select(Holding).where(Holding.account == PAPER_ACCOUNT)))
+        .scalars()
+        .all()
+    )
     positions: dict[str, list[Lot]] = {}
     for h in holdings:
         qty = D(h.quantity)
@@ -60,7 +63,9 @@ async def load_paper_from_db(session: AsyncSession) -> None:
     if holdings:
         broker.account.positions = positions
 
-    orders = (await session.execute(select(OrderRow).where(OrderRow.mode == "paper"))).scalars().all()
+    orders = (
+        (await session.execute(select(OrderRow).where(OrderRow.mode == "paper"))).scalars().all()
+    )
     broker.account.orders = {}
     for row in orders:
         order = Order(
@@ -88,7 +93,9 @@ async def load_paper_from_db(session: AsyncSession) -> None:
 
 async def save_paper_to_db(session: AsyncSession, broker: PaperBroker | None = None) -> None:
     broker = broker or get_paper_broker()
-    state = (await session.execute(select(PaperState).where(PaperState.id == 1))).scalar_one_or_none()
+    state = (
+        await session.execute(select(PaperState).where(PaperState.id == 1))
+    ).scalar_one_or_none()
     if state is None:
         state = PaperState(id=1)
         session.add(state)
@@ -132,7 +139,9 @@ async def save_paper_to_db(session: AsyncSession, broker: PaperBroker | None = N
             "quantity": str(order.quantity),
             "limit_price": str(order.limit_price) if order.limit_price is not None else None,
             "filled_quantity": str(order.filled_quantity),
-            "avg_fill_price": str(order.avg_fill_price) if order.avg_fill_price is not None else None,
+            "avg_fill_price": str(order.avg_fill_price)
+            if order.avg_fill_price is not None
+            else None,
             "status": order.status.value,
             "asset_class": order.asset_class,
             "mode": "paper",

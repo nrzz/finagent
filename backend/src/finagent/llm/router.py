@@ -275,7 +275,9 @@ def _demo_complete(messages: list[dict[str, Any]]) -> dict[str, Any]:
             "tool_calls": [],
             "raw": {"provider": "demo"},
         }
-    if any(w in text for w in ("portfolio", "holdings", "my positions", "p&l", "pnl", "analyze my")):
+    if any(
+        w in text for w in ("portfolio", "holdings", "my positions", "p&l", "pnl", "analyze my")
+    ):
         return {
             "content": json.dumps({"tool": "get_portfolio", "arguments": {}}),
             "tool_calls": [],
@@ -298,7 +300,13 @@ def _demo_complete(messages: list[dict[str, Any]]) -> dict[str, Any]:
             "raw": {"provider": "demo"},
         }
     if any(w in text for w in ("screen", "screener", "ideas", "watch")):
-        universe = "crypto_majors" if "crypto" in text else "india_bluechips" if "india" in text else "watchlist"
+        universe = (
+            "crypto_majors"
+            if "crypto" in text
+            else "india_bluechips"
+            if "india" in text
+            else "watchlist"
+        )
         return {
             "content": json.dumps({"tool": "run_screener", "arguments": {"universe": universe}}),
             "tool_calls": [],
@@ -306,9 +314,7 @@ def _demo_complete(messages: list[dict[str, Any]]) -> dict[str, Any]:
         }
     if symbol or any(w in text for w in ("quote", "price", "nav", "how much")):
         return {
-            "content": json.dumps(
-                {"tool": "get_quote", "arguments": {"symbol": symbol or "AAPL"}}
-            ),
+            "content": json.dumps({"tool": "get_quote", "arguments": {"symbol": symbol or "AAPL"}}),
             "tool_calls": [],
             "raw": {"provider": "demo"},
         }
@@ -458,9 +464,7 @@ class LLMRouter:
         tried_id = profile_id or self.settings.chat_profile_id or self.settings.active_profile_id
         self.apply_profile(tried_id)
         try:
-            return await self._complete_once(
-                messages, tools=tools, model_override=model_override
-            )
+            return await self._complete_once(messages, tools=tools, model_override=model_override)
         except Exception as primary_exc:
             if not allow_fallback:
                 raise
@@ -726,53 +730,52 @@ class LLMRouter:
         }
         timeout = httpx.Timeout(self.settings.timeout_s)
         try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                async with client.stream(
+            async with (
+                httpx.AsyncClient(timeout=timeout) as client,
+                client.stream(
                     "POST", self._chat_url(), headers=self._headers(), json=payload
-                ) as resp:
-                    if resp.status_code >= 400:
-                        # Fall back to non-stream complete (may use Ollama native)
-                        text = (await resp.aread()).decode("utf-8", errors="replace")[:300]
-                        log.warning("llm_stream_http_error", status=resp.status_code, body=text)
-                        result = await self.complete(
-                            messages,
-                            model_override=model_override,
-                            profile_id=tried_id,
-                            allow_fallback=True,
-                        )
-                        content = result.get("content") or ""
-                        size = 32
-                        for i in range(0, len(content), size):
-                            yield content[i : i + size]
-                        return
-                    async for line in resp.aiter_lines():
-                        if not line:
-                            continue
-                        if line.startswith("data:"):
-                            data = line[5:].strip()
-                        else:
-                            data = line.strip()
-                        if not data or data == "[DONE]":
-                            if data == "[DONE]":
-                                break
-                            continue
-                        try:
-                            chunk = json.loads(data)
-                        except json.JSONDecodeError:
-                            continue
-                        # OpenAI-compatible delta
-                        choices = chunk.get("choices") or []
-                        if choices:
-                            delta = choices[0].get("delta") or {}
-                            piece = delta.get("content") or ""
-                            if piece:
-                                yield piece
-                            continue
-                        # Ollama native stream shape (message.content)
-                        msg = chunk.get("message") or {}
-                        piece = msg.get("content") or chunk.get("response") or ""
+                ) as resp,
+            ):
+                if resp.status_code >= 400:
+                    # Fall back to non-stream complete (may use Ollama native)
+                    text = (await resp.aread()).decode("utf-8", errors="replace")[:300]
+                    log.warning("llm_stream_http_error", status=resp.status_code, body=text)
+                    result = await self.complete(
+                        messages,
+                        model_override=model_override,
+                        profile_id=tried_id,
+                        allow_fallback=True,
+                    )
+                    content = result.get("content") or ""
+                    size = 32
+                    for i in range(0, len(content), size):
+                        yield content[i : i + size]
+                    return
+                async for line in resp.aiter_lines():
+                    if not line:
+                        continue
+                    data = line[5:].strip() if line.startswith("data:") else line.strip()
+                    if not data or data == "[DONE]":
+                        if data == "[DONE]":
+                            break
+                        continue
+                    try:
+                        chunk = json.loads(data)
+                    except json.JSONDecodeError:
+                        continue
+                    # OpenAI-compatible delta
+                    choices = chunk.get("choices") or []
+                    if choices:
+                        delta = choices[0].get("delta") or {}
+                        piece = delta.get("content") or ""
                         if piece:
                             yield piece
+                        continue
+                    # Ollama native stream shape (message.content)
+                    msg = chunk.get("message") or {}
+                    piece = msg.get("content") or chunk.get("response") or ""
+                    if piece:
+                        yield piece
         except Exception as exc:
             log.warning("llm_stream_failed", error=str(exc))
             # Last resort: non-stream with fallback profile
@@ -902,7 +905,11 @@ class LLMRouter:
 
     async def pull_ollama_model(self, model: str, base_url: str | None = None) -> dict[str, Any]:
         """Ask local Ollama to pull a model (may take minutes)."""
-        base = (base_url or self.settings.base_url or "http://127.0.0.1:11434").replace("/v1", "").rstrip("/")
+        base = (
+            (base_url or self.settings.base_url or "http://127.0.0.1:11434")
+            .replace("/v1", "")
+            .rstrip("/")
+        )
         try:
             async with httpx.AsyncClient(timeout=httpx.Timeout(1800.0)) as client:
                 resp = await client.post(f"{base}/api/pull", json={"name": model, "stream": False})

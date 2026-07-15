@@ -9,11 +9,14 @@ RUN npm run build
 FROM python:3.12-slim AS runtime
 WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 FINAGENT_DATA_DIR=/data
-RUN apt-get update && apt-get install -y --no-install-recommends build-essential && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential curl \
+    && rm -rf /var/lib/apt/lists/*
 COPY backend/ /app/backend/
 RUN pip install --no-cache-dir /app/backend
 COPY --from=frontend /app/frontend/dist /app/frontend/dist
 COPY config/config.example.yaml /app/config/config.example.yaml
 VOLUME ["/data"]
 EXPOSE 8000
+HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
+    CMD curl -f http://127.0.0.1:8000/api/health/ready || exit 1
 CMD ["uvicorn", "finagent.main:app", "--host", "0.0.0.0", "--port", "8000", "--app-dir", "/app/backend/src"]

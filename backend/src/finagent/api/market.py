@@ -15,11 +15,19 @@ from finagent.api.auth import get_current_user
 from finagent.brokers import BrokerOrderRequest, get_broker_registry
 from finagent.data import get_market_registry
 from finagent.db import get_db
-from finagent.db.models import AuditLog, Cashflow, Holding, Notification, User, WatchlistItem
+from finagent.db.models import (
+    AlertRule,
+    AuditLog,
+    Cashflow,
+    Holding,
+    Notification,
+    User,
+    WatchlistItem,
+)
 from finagent.portfolio import allocation_weights
 from finagent.portfolio.money import D
 from finagent.portfolio.pnl import Lot, apply_split, avg_cost, xirr
-from finagent.scheduler import add_alert, add_job, list_alerts, list_jobs
+from finagent.scheduler import add_alert, add_job, delete_job, list_alerts, list_jobs, toggle_job
 from finagent.trading import black_scholes_greeks, estimate_margin, get_paper_broker, lot_size
 from finagent.trading.persist import save_paper_to_db
 
@@ -44,13 +52,19 @@ async def search(q: str, user: User = Depends(get_current_user)) -> dict[str, An
 async def history(
     symbol: str, period: str = "1mo", user: User = Depends(get_current_user)
 ) -> dict[str, Any]:
-    rows = await get_market_registry().get_history(symbol, period)
-    return {"symbol": symbol, "period": period, "candles": rows}
+    try:
+        rows = await get_market_registry().get_history(symbol, period)
+        return {"symbol": symbol, "period": period, "candles": rows}
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/market/options/{symbol:path}")
 async def options(symbol: str, user: User = Depends(get_current_user)) -> dict[str, Any]:
-    return await get_market_registry().get_option_chain(symbol)
+    try:
+        return await get_market_registry().get_option_chain(symbol)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/watchlist")
@@ -243,12 +257,44 @@ class OrderIn(BaseModel):
     asset_class: str = "equity"
     idempotency_key: str | None = None
     confirmed: bool = False
+    broker_name: str | None = None
     meta: dict[str, Any] = Field(default_factory=dict)
 
 
 @router.get("/trading/blotter")
 async def blotter(user: User = Depends(get_current_user)) -> dict[str, Any]:
     return {"orders": get_paper_broker().blotter()}
+
+
+@router.get("/trading/orders")
+async def trading_orders(user: User = Depends(get_current_user)) -> dict[str, Any]:
+    """Live/paper-aware order list via the active broker adapter."""
+    try:
+        orders = await get_broker_registry().get().get_orders()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"orders": orders}
+
+
+@router.post("/trading/orders/{order_id}/cancel")
+async def cancel_trading_order(
+    order_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    try:
+        result = await get_broker_registry().get().cancel_order(order_id)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    db.add(
+        AuditLog(
+            actor=user.username,
+            action="cancel_order",
+            detail={"order_id": order_id, **(result or {})},
+        )
+    )
+    await db.commit()
+    return result if isinstance(result, dict) else {"ok": True, "result": result}
 
 
 @router.post("/trading/order")
@@ -263,12 +309,14 @@ async def place_order(
         side=body.side,
         quantity=body.quantity,
         order_type=body.order_type,
-        limit_price=body.price if body.order_type == "limit" else None,
+        limit_price=body.price if body.order_type.lower() in ("limit", "sl") else None,
         idempotency_key=body.idempotency_key,
         asset_class=body.asset_class,
         meta=meta,
     )
-    result = await get_broker_registry().place_order_safe(req, confirmed=body.confirmed)
+    result = await get_broker_registry().place_order_safe(
+        req, confirmed=body.confirmed, broker_name=body.broker_name
+    )
     await save_paper_to_db(db)
     db.add(AuditLog(actor=user.username, action="place_order", detail=result))
     await db.commit()
@@ -318,7 +366,11 @@ async def greeks(body: GreeksIn, user: User = Depends(get_current_user)) -> dict
         "iv": g.iv,
         "lot_size": lot,
         "margin_estimate": str(estimate_margin(prem, lot, body.quantity_lots)),
-        "disclaimer": "Illustrative margin only — not exchange SPAN. Paper trading.",
+        "margin_label": "Educational margin estimate (not exchange SPAN)",
+        "disclaimer": (
+            "Educational margin estimate only — illustrative 20% of premium notional; "
+            "not exchange SPAN/VAR. Paper trading / learning aid."
+        ),
     }
 
 
@@ -357,9 +409,7 @@ async def place_option_order(
             "option_type": body.option_type,
             "lot_size": lot,
             "quantity_lots": body.quantity_lots,
-            "margin_estimate": str(
-                estimate_margin(D(body.premium), lot, body.quantity_lots)
-            ),
+            "margin_estimate": str(estimate_margin(D(body.premium), lot, body.quantity_lots)),
         },
     )
     result = await get_broker_registry().place_order_safe(req, confirmed=body.confirmed)
@@ -385,6 +435,30 @@ async def create_alert(body: AlertIn, user: User = Depends(get_current_user)) ->
     return await add_alert(body.symbol, body.condition, body.threshold)
 
 
+@router.delete("/automation/alerts/{alert_id}")
+async def delete_alert(
+    alert_id: int, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
+) -> dict[str, Any]:
+    row = await db.get(AlertRule, alert_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Alert not found")
+    await db.delete(row)
+    await db.commit()
+    return {"ok": True}
+
+
+@router.post("/automation/alerts/{alert_id}/toggle")
+async def toggle_alert(
+    alert_id: int, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
+) -> dict[str, Any]:
+    row = await db.get(AlertRule, alert_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Alert not found")
+    row.active = not row.active
+    await db.commit()
+    return {"ok": True, "active": row.active}
+
+
 class JobIn(BaseModel):
     name: str
     job_type: str
@@ -403,13 +477,33 @@ async def create_job(body: JobIn, user: User = Depends(get_current_user)) -> dic
     return await add_job(body.name, body.job_type, body.cron, body.timezone, body.payload)
 
 
+@router.delete("/automation/jobs/{job_id_or_name}")
+async def remove_job(job_id_or_name: str, user: User = Depends(get_current_user)) -> dict[str, Any]:
+    result = await delete_job(job_id_or_name)
+    if not result.get("ok"):
+        raise HTTPException(status_code=404, detail=result.get("error") or "Job not found")
+    return result
+
+
+@router.post("/automation/jobs/{job_id_or_name}/toggle")
+async def toggle_scheduled_job(
+    job_id_or_name: str, user: User = Depends(get_current_user)
+) -> dict[str, Any]:
+    result = await toggle_job(job_id_or_name)
+    if not result.get("ok"):
+        raise HTTPException(status_code=404, detail=result.get("error") or "Job not found")
+    return result
+
+
 @router.get("/notifications")
 async def notifications(
     user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
 ) -> dict[str, Any]:
     rows = (
-        await db.execute(select(Notification).order_by(Notification.id.desc()).limit(50))
-    ).scalars().all()
+        (await db.execute(select(Notification).order_by(Notification.id.desc()).limit(50)))
+        .scalars()
+        .all()
+    )
     return {
         "items": [
             {
@@ -436,6 +530,19 @@ async def mark_notification_read(
     row.read = True
     await db.commit()
     return {"ok": True}
+
+
+@router.post("/notifications/read-all")
+async def mark_all_notifications_read(
+    user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
+) -> dict[str, Any]:
+    rows = (
+        (await db.execute(select(Notification).where(Notification.read.is_(False)))).scalars().all()
+    )
+    for r in rows:
+        r.read = True
+    await db.commit()
+    return {"ok": True, "count": len(rows)}
 
 
 class CashflowIn(BaseModel):
@@ -494,8 +601,14 @@ async def corporate_action(
 ) -> dict[str, Any]:
     sym = body.symbol.upper()
     rows = (
-        await db.execute(select(Holding).where(Holding.symbol == sym, Holding.account == body.account))
-    ).scalars().all()
+        (
+            await db.execute(
+                select(Holding).where(Holding.symbol == sym, Holding.account == body.account)
+            )
+        )
+        .scalars()
+        .all()
+    )
     if not rows:
         # Also apply to paper book
         paper = get_paper_broker()
@@ -508,7 +621,12 @@ async def corporate_action(
             AuditLog(
                 actor=user.username,
                 action="corporate_action_split",
-                detail={"symbol": sym, "num": body.ratio_num, "den": body.ratio_den, "scope": "paper"},
+                detail={
+                    "symbol": sym,
+                    "num": body.ratio_num,
+                    "den": body.ratio_den,
+                    "scope": "paper",
+                },
             )
         )
         await db.commit()
@@ -543,6 +661,34 @@ async def portfolio_benchmark(
         "candles": candles,
         "disclaimer": "Benchmark for comparison only. Not financial advice.",
     }
+
+
+@router.get("/portfolio/tax-lots.csv")
+async def tax_lots_csv(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """FIFO lot export for tax worksheets (illustrative — not tax advice)."""
+    from fastapi.responses import PlainTextResponse
+
+    rows = (await db.execute(select(Holding).order_by(Holding.symbol, Holding.id))).scalars().all()
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["symbol", "quantity", "avg_cost", "currency", "acquired", "account", "notes"])
+    for r in rows:
+        w.writerow(
+            [
+                r.symbol,
+                r.quantity,
+                r.avg_cost,
+                r.currency,
+                r.acquired or "",
+                r.account,
+                r.notes or "",
+            ]
+        )
+    return PlainTextResponse(
+        buf.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=finagent-tax-lots.csv"},
+    )
 
 
 @router.get("/audit")

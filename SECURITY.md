@@ -32,5 +32,18 @@ We aim to acknowledge within 72 hours and ship a fix or mitigation ASAP.
 - Passwords: Argon2id (bcrypt migrates on next login); login rate-limited and audited
 - Startup fails closed on insecure default JWT/Fernet secrets unless `FINAGENT_ALLOW_INSECURE_SECRETS=1`
 - Wizard cannot enable live trading; live orders always need confirmation
-- LLM URL SSRF allowlist; agent cannot confirm paper fills without the trading UI
+- Kill switch **on** is instant (Panic Stop in header); turning kill switch **off** needs re-auth
+- Live routing uses only `trading.default_broker` (never an accidental stub)
+- LLM URL SSRF allowlist; webhook/Discord/Slack URLs SSRF-checked (private IPs blocked unless `FINAGENT_ALLOW_PRIVATE_WEBHOOKS=1`)
+- Agent cannot confirm paper fills without the trading UI / cannot enable live
+- Structured logs redact passwords, tokens, and secrets
 - Backups export ciphertext only — restore with the same `FINAGENT_SECRET_KEY`, then restart
+
+## Threat model (short)
+
+| Risk | Mitigation |
+|------|------------|
+| Stolen laptop DB | Secrets encrypted; protect `.env` / `FINAGENT_SECRET_KEY` |
+| Malicious LLM tool call | Agent cannot go live or set `confirmed`; tools cannot read secrets |
+| SSRF via webhook | Host allowlist + block metadata/private IPs |
+| Accidental live order | Paper default; re-auth for live; confirm; Panic Stop |

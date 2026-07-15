@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Any
 
 from finagent.config import get_settings
@@ -13,7 +15,14 @@ from finagent.data.yfinance_adapter import YFinanceAdapter
 
 class MarketDataRegistry:
     def __init__(self) -> None:
+        self._fingerprint: str | None = None
         self._rebuild()
+
+    @staticmethod
+    def _markets_fingerprint() -> str:
+        dump = get_settings().markets.model_dump(mode="json")
+        raw = json.dumps(dump, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(raw.encode()).hexdigest()
 
     def _rebuild(self) -> None:
         settings = get_settings().markets
@@ -26,12 +35,17 @@ class MarketDataRegistry:
         if settings.crypto.enabled:
             ex = settings.crypto.exchanges[0] if settings.crypto.exchanges else "binance"
             self.adapters["ccxt"] = CachedAdapter(CCXTAdapter(ex), ttl)
+        self._fingerprint = self._markets_fingerprint()
 
     def refresh(self) -> None:
         self._rebuild()
 
+    def _ensure_fresh(self) -> None:
+        if self._fingerprint != self._markets_fingerprint():
+            self._rebuild()
+
     def _pick(self, symbol: str) -> MarketDataAdapter:
-        self.refresh()
+        self._ensure_fresh()
         s = symbol.upper()
         if s.startswith("MF:") or s.isdigit():
             if "india" not in self.adapters:
@@ -59,7 +73,7 @@ class MarketDataRegistry:
         return await self._pick(symbol).get_quote(symbol)
 
     async def search(self, query: str) -> list[dict[str, str]]:
-        self.refresh()
+        self._ensure_fresh()
         results: list[dict[str, str]] = []
         for adapter in self.adapters.values():
             try:

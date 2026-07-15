@@ -5,23 +5,23 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from finagent.portfolio.money import D, quantize
 
 
-class OrderSide(str, Enum):
+class OrderSide(StrEnum):
     BUY = "buy"
     SELL = "sell"
 
 
-class OrderType(str, Enum):
+class OrderType(StrEnum):
     MARKET = "market"
     LIMIT = "limit"
 
 
-class OrderStatus(str, Enum):
+class OrderStatus(StrEnum):
     PENDING = "pending"
     OPEN = "open"
     PARTIALLY_FILLED = "partially_filled"

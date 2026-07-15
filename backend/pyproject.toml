@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "finagent"
-version = "0.1.0"
+version = "0.2.0"
 description = "Self-hosted AI finance agent — stocks, mutual funds, F&O, crypto"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.11"
@@ -25,13 +25,14 @@ dependencies = [
   "passlib[bcrypt,argon2]>=1.7.4",
   "bcrypt>=4.0.1,<4.1",
   "argon2-cffi>=23.1.0",
-  "python-jose[cryptography]>=3.3.0",
+  "PyJWT>=2.9.0",
   "apscheduler>=3.10.4",
   "yfinance>=0.2.50",
   "ccxt>=4.4.0",
   "exchange-calendars>=4.5.0",
   "tenacity>=9.0.0",
   "cachetools>=5.5.0",
+  "pyotp>=2.9.0",
 ]
 
 [project.optional-dependencies]
@@ -70,7 +71,14 @@ src = ["src", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "N"]
-ignore = ["E501"]
+# E501: long lines OK in docs/strings
+# B008: FastAPI Depends()/Query()/File() in defaults is idiomatic
+# N802: D() is the intentional Decimal constructor alias used across trading/portfolio
+ignore = ["E501", "B008", "N802"]
+
+[tool.ruff.lint.per-file-ignores]
+# E2E must set env before importing the app
+"tests/e2e/*.py" = ["E402"]
 
 [tool.mypy]
 python_version = "3.11"
@@ -82,25 +90,21 @@ packages = ["finagent"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-module = ["yfinance.*", "ccxt.*", "exchange_calendars.*", "passlib.*", "jose.*"]
+module = ["yfinance.*", "ccxt.*", "exchange_calendars.*", "passlib.*", "jwt.*"]
 ignore_missing_imports = true
 
 [tool.coverage.run]
 source = ["finagent"]
 omit = [
   "*/tests/*",
-  "*/api/*",
-  "*/agent/*",
-  "*/data/*",
-  "*/db/*",
-  "*/brokers/*",
-  "*/scheduler/*",
   "*/main.py",
+  # Heavy I/O surfaces covered by e2e / mocked unit tests separately
   "*/llm/router.py",
+  "*/llm/pull_jobs.py",
+  "*/brokers/stubs.py",
 ]
 
 [tool.coverage.report]
-fail_under = 75
+fail_under = 50
 show_missing = true
-# Core money / order / config / paper engine are gated above.
-# Integration surfaces (API, adapters, LLM I/O) covered by CI smoke later.
+# Brokers/API/notify covered by targeted unit + e2e; fail gate tracks core math + security.

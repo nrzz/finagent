@@ -38,12 +38,23 @@ def is_expired(expiry: date, today: date | None = None) -> bool:
     return expiry < today
 
 
+# Shown next to margin_estimate in API/UI — not exchange SPAN / VAR.
+MARGIN_EDUCATIONAL_LABEL = (
+    "Educational margin estimate only — illustrative 20% of premium notional; "
+    "not exchange SPAN/VAR. Paper trading / learning aid."
+)
+
+
 def estimate_margin(
     premium: Decimal, lot: int, quantity_lots: int = 1, multiplier: Decimal = D("1")
 ) -> Decimal:
-    """Rough margin estimate for paper trading (not a substitute for exchange SPAN)."""
+    """Educational margin estimate for paper F&O (not exchange SPAN).
+
+    Uses a flat 20% of premium × lot × quantity — for teaching/UI only.
+    Do not use for live risk or broker margin requirements.
+    """
     notional = premium * D(lot) * D(quantity_lots) * multiplier
-    return quantize(notional * D("0.20"))  # 20% illustrative
+    return quantize(notional * D("0.20"))  # 20% educational illustration
 
 
 def _norm_cdf(x: float) -> float:

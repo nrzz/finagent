@@ -17,7 +17,7 @@
 If you have Git installed:
 
 ```text
-git clone https://github.com/YOUR_ORG/finagent.git
+git clone https://github.com/nrzz/finagent.git
 ```
 
 (Replace with the real repo URL when published.)
@@ -98,6 +98,32 @@ Leave the tab open during big downloads. If chat feels wrong, set Active back to
 
 ---
 
+## Connect a broker (Zerodha / Angel / Alpaca) — click path
+
+1. **Settings → Brokers**
+2. Type your FinAgent password at the top (needed to save keys)
+3. Pick **Alpaca**, **Zerodha**, or **Angel**
+4. Follow the numbered steps on screen → paste keys → **Save secret**
+5. **Test connection** until it says Connected (Zerodha: Open Kite login → Exchange token; Angel: Login to Angel)
+6. **Settings → Trading** → set **Default live broker** → keep mode **Paper** until you are ready
+7. Optional: **Sync holdings** to pull positions into Portfolio
+
+Live money: **Settings → Trading → Live** (password required). Use header **Panic Stop** to block all orders instantly.
+
+---
+
+## Get alerts on Telegram / Email / Discord (click path)
+
+1. **Settings → Notifications**
+2. Turn on **Send alerts outside this app**
+3. Open **Telegram** (or Email / Discord / Slack / Webhook)
+4. Paste credentials → **Save** → **Test send**
+5. Price alerts still appear under **Auto**; external channels only fire after a successful Test
+
+Web Push: **Generate VAPID keys**, then allow notifications in the browser/PWA.
+
+---
+
 ## Backup
 
 **Settings → Backup** → Download backup. Store the `.db` file and your `.env` (`FINAGENT_SECRET_KEY`) together. Restore uploads the `.db` then restart FinAgent.
@@ -107,6 +133,17 @@ Leave the tab open during big downloads. If chat feels wrong, set Active back to
 ## Stop the app
 
 Close the `START.bat` window, or press `Ctrl+C` in it.
+
+---
+
+## Keep FinAgent running (Windows service / Docker)
+
+Price alerts and DCA jobs only fire while FinAgent is running.
+
+- **Simple:** leave `START.bat` open on your PC
+- **Windows (optional):** run FinAgent in the background with [NSSM](https://nssm.cc/) or Task Scheduler (start at login)
+- **Docker (recommended for always-on):** `docker compose up -d` — restarts automatically (`restart: unless-stopped`) and health-checks `/api/health/ready`
+- Open **Auto** anytime to see in-app notifications; external channels need **Settings → Notifications** tested once
 
 ---
 

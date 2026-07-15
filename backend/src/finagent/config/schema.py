@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 from uuid import uuid4
 
 from pydantic import BaseModel, Field, field_validator
 
 
-class LLMProvider(str, Enum):
+class LLMProvider(StrEnum):
     DEMO = "demo"
     OLLAMA = "ollama"
     OPENAI = "openai"
@@ -19,24 +19,24 @@ class LLMProvider(str, Enum):
     OPENAI_COMPATIBLE = "openai-compatible"
 
 
-class ToolMode(str, Enum):
+class ToolMode(StrEnum):
     NATIVE = "native"
     JSON_FALLBACK = "json-fallback"
     AUTO = "auto"
 
 
-class TradingMode(str, Enum):
+class TradingMode(StrEnum):
     PAPER = "paper"
     LIVE = "live"
 
 
-class Theme(str, Enum):
+class Theme(StrEnum):
     DARK = "dark"
     LIGHT = "light"
     SYSTEM = "system"
 
 
-class NumberFormat(str, Enum):
+class NumberFormat(StrEnum):
     INDIAN = "indian"
     WESTERN = "western"
 
@@ -148,6 +148,51 @@ class TradingConfig(BaseModel):
     risk: RiskConfig = Field(default_factory=RiskConfig)
     paper_starting_cash: float = Field(default=1_000_000.0, ge=1000.0)
     paper_currency: str = "INR"
+    # Live routing: only this broker places real orders when mode=live
+    default_broker: str = "alpaca"
+    # Optional: use Alpaca paper API instead of local paper book
+    paper_backend: str = "local"  # local | alpaca
+    # India default product for live tickets
+    india_default_product: str = "CNC"  # CNC | MIS | NRML
+
+
+class NotifyChannelConfig(BaseModel):
+    enabled: bool = False
+    # Secret names in encrypted store (never store raw tokens in settings JSON)
+    bot_token_secret: str | None = None  # Telegram
+    chat_id: str | None = None
+    smtp_host: str | None = None
+    smtp_port: int = 587
+    smtp_user_secret: str | None = None
+    smtp_password_secret: str | None = None
+    smtp_from: str | None = None
+    smtp_to: str | None = None
+    smtp_use_tls: bool = True
+    webhook_url_secret: str | None = None  # generic / discord / slack URL stored as secret
+    webhook_hmac_secret: str | None = None
+    # Web Push: public key may be stored in settings; private in secrets
+    vapid_public_key: str | None = None
+    vapid_private_secret: str | None = "VAPID_PRIVATE_KEY"
+    vapid_mailto: str | None = None
+
+
+class NotificationsConfig(BaseModel):
+    """External alert delivery — off until user enables + Tests a channel."""
+
+    master_enabled: bool = False
+    events_alert: bool = True
+    events_job: bool = True
+    events_order: bool = True
+    events_system: bool = True
+    quiet_hours_start: str | None = None  # "22:00"
+    quiet_hours_end: str | None = None  # "07:00"
+    mute_symbols: list[str] = Field(default_factory=list)
+    telegram: NotifyChannelConfig = Field(default_factory=NotifyChannelConfig)
+    email: NotifyChannelConfig = Field(default_factory=NotifyChannelConfig)
+    webhook: NotifyChannelConfig = Field(default_factory=NotifyChannelConfig)
+    webpush: NotifyChannelConfig = Field(default_factory=NotifyChannelConfig)
+    discord: NotifyChannelConfig = Field(default_factory=NotifyChannelConfig)
+    slack: NotifyChannelConfig = Field(default_factory=NotifyChannelConfig)
 
 
 class AppearanceConfig(BaseModel):
@@ -166,6 +211,7 @@ class AppSettings(BaseModel):
     markets: MarketsConfig = Field(default_factory=MarketsConfig)
     trading: TradingConfig = Field(default_factory=TradingConfig)
     appearance: AppearanceConfig = Field(default_factory=AppearanceConfig)
+    notifications: NotificationsConfig = Field(default_factory=NotificationsConfig)
 
     @field_validator("llm", mode="before")
     @classmethod

@@ -9,16 +9,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- Paper-complete product surface: persisted paper book & automation, F&O page, portfolio XIRR/corp actions/benchmarks, brokers UI (live gated)
-- Playwright A–Z + mobile/APK viewport e2e with screenshots
-- Beginner one-click flow: `START.bat`, `BUILD-APK.bat`, simplified `HOW-TO-USE.md` / `README.md`
-- GitHub Release workflow builds and attaches **FinAgent-android.apk** (no Android Studio for end users)
-- Settings → Device / APK server URL for Capacitor phones
+- (none yet)
+
+## [0.2.0] — 2026-07-15
+
+### Added
+
+- Live broker adapters: Zerodha, Angel One, Alpaca + Settings Connect wizards
+- Notification dispatcher: Telegram, Email, Webhook, Web Push, Discord, Slack (quiet hours / mutes / event filters)
+- Panic Stop, reauth gates for secrets / live mode / kill-switch off
+- Log redaction for secrets; webhook URL SSRF guards
+- Docker `HEALTHCHECK` on `/api/health/ready` + `restart: unless-stopped`; always-on docs
+- Agent steward tools (read-only): broker health, watchlist CRUD, alerts/jobs, explain last error
+- Live trading blotter + cancel; Automation job toggle/delete; watchlist delete
+- React ErrorBoundary; frontend vitest for notify helpers + API 401
+- F&O educational margin labels + options chain table foundations
+- Backtest foundation: `simulate_dca` + `/api/backtest/dca`
+- ADR 0005 multi-user households; Tauri desktop guide + placeholder
+- `PROJECT.md` PM charter (backlog, risk, releases, DoD)
+- Mocked httpx unit tests for Zerodha / Angel / Alpaca
 
 ### Changed
 
-- End-user APK path is GitHub Releases download, not local Android Studio
-- Mobile nav includes all pages; Demo LLM fallback hardened
+- Auth tokens via **PyJWT** (replaces python-jose / ecdsa)
+- Chat SSE always emits `error` then `done` on LLM failures
+- Market history/options error handling; cache stale flag; registry pick without full rebuild
+- Broker holdings HTTP errors surface as errors (not empty books)
+- Angel live orders gated until `symbol_token` resolvable; Zerodha session-expiry UX
+- Coverage fail-under 50%; pip-audit documents setuptools ignore for ccxt pin
+- Ruff clean on CI (B008/N802 policy; e2e E402)
+
+### Security
+
+- Paper remains default; agent cannot enable live or set `confirmed`
+- Reauth required for secrets, live mode, and disabling kill switch
 
 ## [0.1.0] — 2026-07-14
 
@@ -31,6 +55,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - BrokerAdapter plugin interface with live-mode safety gates
 - PWA + Capacitor Android packaging docs/CI
 - Docker Compose, MkDocs docs, ADRs
+- Paper-complete product surface: F&O page, portfolio XIRR/corp actions/benchmarks
+- Playwright A–Z + mobile/APK viewport e2e
+- Beginner one-click flow: `START.bat`, `BUILD-APK.bat`
+- GitHub Release workflow builds FinAgent-android.apk
+- Settings → Device / APK server URL for Capacitor phones
 
-[Unreleased]: https://github.com/YOUR_ORG/finagent/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/YOUR_ORG/finagent/releases/tag/v0.1.0
+[Unreleased]: https://github.com/nrzz/finagent/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/nrzz/finagent/releases/tag/v0.2.0
+[0.1.0]: https://github.com/nrzz/finagent/releases/tag/v0.1.0

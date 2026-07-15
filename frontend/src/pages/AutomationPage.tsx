@@ -77,8 +77,33 @@ export function AutomationPage() {
             </Button>
             <div className="text-xs space-y-1 max-h-40 overflow-auto pt-2">
               {alerts.map((a) => (
-                <div key={String(a.id)} className="font-mono border-b border-border/40 py-1">
-                  {String(a.symbol)} {String(a.condition)} {String(a.threshold)}
+                <div key={String(a.id)} className="font-mono border-b border-border/40 py-1 flex justify-between gap-2">
+                  <span>
+                    {String(a.symbol)} {String(a.condition)} {String(a.threshold)}
+                    {a.active === false ? " (off)" : ""}
+                  </span>
+                  <span className="flex gap-1">
+                    <button
+                      type="button"
+                      className="underline"
+                      onClick={async () => {
+                        await api(`/api/automation/alerts/${a.id}/toggle`, { method: "POST" });
+                        await refresh();
+                      }}
+                    >
+                      toggle
+                    </button>
+                    <button
+                      type="button"
+                      className="underline text-red-400"
+                      onClick={async () => {
+                        await api(`/api/automation/alerts/${a.id}`, { method: "DELETE" });
+                        await refresh();
+                      }}
+                    >
+                      delete
+                    </button>
+                  </span>
                 </div>
               ))}
             </div>
@@ -133,8 +158,48 @@ export function AutomationPage() {
             </Button>
             <div className="text-xs space-y-1 max-h-40 overflow-auto pt-2">
               {jobs.map((j) => (
-                <div key={String(j.id || j.name)} className="font-mono border-b border-border/40 py-1">
-                  {String(j.name)} · {String(j.job_type)} · {String(j.cron)}
+                <div
+                  key={String(j.id || j.name)}
+                  className="font-mono border-b border-border/40 py-1 flex justify-between gap-2"
+                >
+                  <span>
+                    {String(j.name)} · {String(j.job_type)} · {String(j.cron)}
+                    {j.enabled === false ? " (off)" : ""}
+                  </span>
+                  <span className="flex gap-1 shrink-0">
+                    <button
+                      type="button"
+                      className="underline"
+                      onClick={async () => {
+                        try {
+                          await api(`/api/automation/jobs/${encodeURIComponent(String(j.name))}/toggle`, {
+                            method: "POST",
+                          });
+                          await refresh();
+                        } catch (e) {
+                          setMsg(e instanceof Error ? e.message : "Toggle failed");
+                        }
+                      }}
+                    >
+                      {j.enabled === false ? "enable" : "disable"}
+                    </button>
+                    <button
+                      type="button"
+                      className="underline text-red-400"
+                      onClick={async () => {
+                        try {
+                          await api(`/api/automation/jobs/${encodeURIComponent(String(j.name))}`, {
+                            method: "DELETE",
+                          });
+                          await refresh();
+                        } catch (e) {
+                          setMsg(e instanceof Error ? e.message : "Delete failed");
+                        }
+                      }}
+                    >
+                      delete
+                    </button>
+                  </span>
                 </div>
               ))}
             </div>
@@ -145,12 +210,43 @@ export function AutomationPage() {
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle>In-app notifications</CardTitle>
-          <Button size="sm" variant="secondary" onClick={() => refresh()}>Refresh</Button>
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={async () => {
+                await api("/api/notifications/read-all", { method: "POST" });
+                await refresh();
+              }}
+            >
+              Mark all read
+            </Button>
+            <Button size="sm" variant="secondary" onClick={() => refresh()}>
+              Refresh
+            </Button>
+          </div>
         </CardHeader>
         <CardContent className="space-y-2 max-h-64 overflow-auto">
           {notes.map((n) => (
-            <div key={String(n.id)} className="rounded-lg border p-3 text-sm">
-              <div className="font-medium">{String(n.title)}</div>
+            <div
+              key={String(n.id)}
+              className={`rounded-lg border p-3 text-sm ${n.read ? "opacity-60" : ""}`}
+            >
+              <div className="flex justify-between gap-2">
+                <div className="font-medium">{String(n.title)}</div>
+                {!n.read && (
+                  <button
+                    type="button"
+                    className="text-xs underline"
+                    onClick={async () => {
+                      await api(`/api/notifications/${n.id}/read`, { method: "POST" });
+                      await refresh();
+                    }}
+                  >
+                    Mark read
+                  </button>
+                )}
+              </div>
               <div className="text-muted-foreground text-xs mt-1 whitespace-pre-wrap">{String(n.body)}</div>
               <div className="text-[10px] text-muted-foreground mt-1">{String(n.created_at)}</div>
             </div>

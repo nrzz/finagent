@@ -20,9 +20,7 @@ def _names_match(a: str, b: str) -> bool:
     if a == b:
         return True
     # tag aliases: qwen2.5:7b vs qwen2.5:7b-instruct
-    if a.split(":")[0] == b.split(":")[0] and (a.startswith(b) or b.startswith(a)):
-        return True
-    return False
+    return bool(a.split(":")[0] == b.split(":")[0] and (a.startswith(b) or b.startswith(a)))
 
 
 async def list_loaded_models(base_url: str | None = None) -> list[dict[str, Any]]:

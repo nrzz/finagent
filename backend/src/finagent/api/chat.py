@@ -31,9 +31,7 @@ async def chat_history(
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     lim = max(1, min(limit, 500))
-    result = await db.execute(
-        select(ChatMessage).order_by(ChatMessage.id.desc()).limit(lim)
-    )
+    result = await db.execute(select(ChatMessage).order_by(ChatMessage.id.desc()).limit(lim))
     rows = list(reversed(result.scalars().all()))
     return {
         "messages": [
@@ -91,22 +89,30 @@ async def chat_stream(
         final_content = ""
         citations: list[Any] = []
         tool_trace: list[Any] = []
-        async for event in agent.stream_events(body.message, body.history):
-            if event.get("type") == "final":
-                final_content = event.get("content") or ""
-                citations = event.get("citations") or []
-                tool_trace = event.get("tool_trace") or []
-            yield f"data: {json.dumps(event)}\n\n"
-        db.add(ChatMessage(role="user", content=body.message))
-        db.add(
-            ChatMessage(
-                role="assistant",
-                content=final_content,
-                tool_calls={"trace": tool_trace},
-                citations={"items": citations},
+        try:
+            async for event in agent.stream_events(body.message, body.history):
+                if event.get("type") == "final":
+                    final_content = event.get("content") or ""
+                    citations = event.get("citations") or []
+                    tool_trace = event.get("tool_trace") or []
+                if event.get("type") == "error":
+                    final_content = event.get("message") or final_content
+                yield f"data: {json.dumps(event)}\n\n"
+                if event.get("type") == "done":
+                    return
+            db.add(ChatMessage(role="user", content=body.message))
+            db.add(
+                ChatMessage(
+                    role="assistant",
+                    content=final_content,
+                    tool_calls={"trace": tool_trace},
+                    citations={"items": citations},
+                )
             )
-        )
-        await db.commit()
-        yield 'data: {"type":"done"}\n\n'
+            await db.commit()
+            yield 'data: {"type":"done"}\n\n'
+        except Exception as exc:
+            yield f"data: {json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
+            yield 'data: {"type":"done"}\n\n'
 
     return StreamingResponse(event_gen(), media_type="text/event-stream")

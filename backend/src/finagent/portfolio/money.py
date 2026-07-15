@@ -32,10 +32,7 @@ def quantize_qty(value: Decimal, places: int = 8) -> Decimal:
 
 def format_money(value: Decimal, currency: str = "INR", number_format: str = "indian") -> str:
     q = quantize(value, 2)
-    if number_format == "indian":
-        s = _indian_group(f"{q:.2f}")
-    else:
-        s = f"{q:,.2f}"
+    s = _indian_group(f"{q:.2f}") if number_format == "indian" else f"{q:,.2f}"
     return f"{currency} {s}"
 
 

@@ -156,14 +156,16 @@ test.describe("A–Z desktop UI", () => {
     await inputs.nth(1).fill("1");
     await inputs.nth(2).fill("150");
     await page.getByRole("button", { name: "Place paper order" }).click();
-    await expect(page.getByText(/Order filled|Order /i)).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByText(/Paper order (filled|FILLED|submitted)|via paper/i).first()).toBeVisible({
+      timeout: 30_000,
+    });
     await shot(page, "06-trading-buy");
 
     await page.getByRole("button", { name: "Sell" }).click();
     await inputs.nth(1).fill("99999");
     await inputs.nth(2).fill("150");
     await page.getByRole("button", { name: "Place paper order" }).click();
-    await expect(page.getByText(/rejected|Failed|insufficient|not enough|error/i).first()).toBeVisible({
+    await expect(page.getByText(/rejected|Failed|insufficient|not enough|error|Kill/i).first()).toBeVisible({
       timeout: 20_000,
     });
     await shot(page, "06-trading-oversell");
@@ -233,14 +235,28 @@ test.describe("A–Z desktop UI", () => {
     await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible({ timeout: 20_000 });
     await shot(page, "09-settings-ai");
 
-    for (const tab of ["Markets", "Trading", "Brokers", "Appearance", "Device / APK", "Secrets", "Backup"]) {
+    for (const tab of [
+      "Markets",
+      "Trading",
+      "Brokers",
+      "Notifications",
+      "Appearance",
+      "Device / APK",
+      "Secrets",
+      "Security / Audit",
+      "Backup",
+    ]) {
       await page.getByRole("button", { name: tab, exact: true }).click();
       await shot(page, `09-settings-${tab.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}`);
     }
     await expect(page.getByText(/Backup & restore|Download backup/i).first()).toBeVisible();
+    await page.getByRole("button", { name: "Brokers", exact: true }).click();
+    await expect(page.getByText(/Connect a broker|Zerodha|Alpaca/i).first()).toBeVisible();
+    await page.getByRole("button", { name: "Notifications", exact: true }).click();
+    await expect(page.getByText(/Send alerts outside this app|Telegram/i).first()).toBeVisible();
 
     await page.getByRole("button", { name: "Brokers", exact: true }).click();
-    await expect(page.getByText(/Zerodha|Alpaca|paper until Live/i).first()).toBeVisible();
+    await expect(page.getByText(/Zerodha|Alpaca|Connect a broker/i).first()).toBeVisible();
 
     await page.getByRole("button", { name: "Device / APK", exact: true }).click();
     await page.getByTestId("apk-server-url").fill("http://192.168.1.10:8000");
@@ -251,8 +267,8 @@ test.describe("A–Z desktop UI", () => {
 
     await page.getByRole("button", { name: "Trading", exact: true }).click();
     await page.locator('input[type="checkbox"]').first().check();
-    await page.locator('input[type="password"]').fill("password123");
-    await page.getByRole("button", { name: "Save trading" }).click();
+    await page.locator('input[type="password"]').first().fill("password123");
+    await page.getByRole("button", { name: /Save trading/i }).click();
     await expect(page.getByText(/Saved|saved/i).first()).toBeVisible({ timeout: 15_000 });
     await shot(page, "09-settings-kill-on");
 
@@ -262,14 +278,14 @@ test.describe("A–Z desktop UI", () => {
     await inputs.nth(1).fill("1");
     await inputs.nth(2).fill("10");
     await page.getByRole("button", { name: "Place paper order" }).click();
-    await expect(page.getByText(/kill|rejected|Failed/i).first()).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByText(/kill|rejected|Failed|Panic/i).first()).toBeVisible({ timeout: 20_000 });
     await shot(page, "09-trading-kill-blocked");
 
     await page.goto("/settings");
     await page.getByRole("button", { name: "Trading", exact: true }).click();
     await page.locator('input[type="checkbox"]').first().uncheck();
-    await page.locator('input[type="password"]').fill("password123");
-    await page.getByRole("button", { name: "Save trading" }).click();
+    await page.locator('input[type="password"]').first().fill("password123");
+    await page.getByRole("button", { name: /Save trading/i }).click();
     await expect(page.getByText(/Saved/i).first()).toBeVisible({ timeout: 15_000 });
   });
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import time
 from dataclasses import dataclass, field
@@ -43,8 +44,7 @@ class PullProgress:
             "status": self.status,
             "error": self.error,
             "elapsed_s": round(time.monotonic() - self.started_at, 1),
-            "running": self.phase
-            not in ("success", "failed", "cancelled"),
+            "running": self.phase not in ("success", "failed", "cancelled"),
         }
 
 
@@ -137,9 +137,7 @@ async def _run_pull(job: PullJob) -> None:
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(3600.0, connect=10.0)) as client:
             job._client = client
-            async with client.stream(
-                "POST", url, json={"name": job.model, "stream": True}
-            ) as resp:
+            async with client.stream("POST", url, json={"name": job.model, "stream": True}) as resp:
                 if resp.status_code >= 400:
                     body = (await resp.aread()).decode("utf-8", errors="replace")[:500]
                     progress.phase = "failed"
@@ -210,10 +208,7 @@ async def _run_pull(job: PullJob) -> None:
                         for m in (tags.json().get("models") or [])
                         if m.get("name")
                     ]
-                    if any(
-                        n == job.model or n.startswith(job.model.split(":")[0])
-                        for n in names
-                    ):
+                    if any(n == job.model or n.startswith(job.model.split(":")[0]) for n in names):
                         progress.phase = "success"
                         progress.percent = 100.0
                     else:
@@ -225,9 +220,7 @@ async def _run_pull(job: PullJob) -> None:
                 await _broadcast(job)
     except httpx.ConnectError:
         progress.phase = "failed"
-        progress.error = (
-            "Ollama is offline. Install from https://ollama.com/download and start it."
-        )
+        progress.error = "Ollama is offline. Install from https://ollama.com/download and start it."
         await _broadcast(job)
     except Exception as exc:
         if job.cancel.is_set():
@@ -254,10 +247,8 @@ async def cancel_pull(model: str) -> bool:
     job.cancel.set()
     if job.task and not job.task.done():
         job.task.cancel()
-        try:
+        with contextlib.suppress(Exception):
             await job.task
-        except Exception:
-            pass
     job.progress.phase = "cancelled"
     job.progress.error = "Cancelled by user"
     await _broadcast(job)
@@ -317,17 +308,13 @@ async def start_or_attach(
             return existing, True
         other2 = active_job()
         if other2 and other2.model != model:
-            raise RuntimeError(
-                f"Only one install at a time. “{other2.model}” is still installing."
-            )
+            raise RuntimeError(f"Only one install at a time. “{other2.model}” is still installing.")
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
                 resp = await client.get(f"{base}/api/tags")
                 resp.raise_for_status()
                 names = [
-                    m.get("name", "")
-                    for m in (resp.json().get("models") or [])
-                    if m.get("name")
+                    m.get("name", "") for m in (resp.json().get("models") or []) if m.get("name")
                 ]
                 if model in names:
                     job = PullJob(

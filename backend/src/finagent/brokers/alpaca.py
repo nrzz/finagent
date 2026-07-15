@@ -21,6 +21,7 @@ class AlpacaBroker(BrokerAdapter):
     name = "alpaca"
     supports_live = True
     display_name = "Alpaca"
+    secret_names = ["ALPACA_API_KEY", "ALPACA_API_SECRET"]
 
     def _keys(self) -> tuple[str | None, str | None]:
         return resolve_api_key("ALPACA_API_KEY"), resolve_api_key("ALPACA_API_SECRET")
@@ -30,8 +31,10 @@ class AlpacaBroker(BrokerAdapter):
         return bool(k and s)
 
     def _base(self) -> str:
-        # Paper endpoint unless live mode explicitly enabled
-        if get_settings().trading.mode == TradingMode.LIVE:
+        settings = get_settings().trading
+        # Live endpoint only when FinAgent is in live mode; else paper API
+        # (also used when paper_backend=alpaca)
+        if settings.mode == TradingMode.LIVE:
             return LIVE_BASE
         return PAPER_BASE
 
@@ -119,7 +122,12 @@ class AlpacaBroker(BrokerAdapter):
             if resp.status_code >= 400:
                 raise RuntimeError(resp.text[:500])
             data = resp.json()
-            log.info("alpaca_order", id=data.get("id"), symbol=request.symbol, paper=self._base() == PAPER_BASE)
+            log.info(
+                "alpaca_order",
+                id=data.get("id"),
+                symbol=request.symbol,
+                paper=self._base() == PAPER_BASE,
+            )
             return {
                 "broker": "alpaca",
                 "paper": self._base() == PAPER_BASE,

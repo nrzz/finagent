@@ -13,6 +13,31 @@ from finagent.trading import get_paper_broker
 
 ToolHandler = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
 
+_SENSITIVE_KEY_FRAGMENTS = (
+    "password",
+    "secret",
+    "token",
+    "authorization",
+    "ciphertext",
+    "api_key",
+    "api_secret",
+    "hmac",
+)
+
+
+def _sanitize_public(data: dict[str, Any]) -> dict[str, Any]:
+    """Drop secret-like keys; never return credentials to the agent."""
+    out: dict[str, Any] = {}
+    for k, v in data.items():
+        lk = str(k).lower()
+        if lk == "secret_names" or any(s in lk for s in _SENSITIVE_KEY_FRAGMENTS):
+            continue
+        if isinstance(v, dict):
+            out[k] = _sanitize_public(v)
+        else:
+            out[k] = v
+    return out
+
 
 class GetQuoteArgs(BaseModel):
     symbol: str = Field(min_length=1, max_length=32)
@@ -41,12 +66,26 @@ class SearchArgs(BaseModel):
     query: str = Field(min_length=1, max_length=64)
 
 
+class BrokerHealthArgs(BaseModel):
+    broker: str | None = Field(default=None, max_length=32)
+
+
+class WatchlistSymbolArgs(BaseModel):
+    symbol: str = Field(min_length=1, max_length=64)
+    name: str | None = None
+    asset_class: str = "equity"
+
+
+class RemoveWatchlistArgs(BaseModel):
+    symbol: str = Field(min_length=1, max_length=64)
+
+
 TOOLS_SCHEMA: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
             "name": "get_quote",
-            "description": "Get latest quote with source and timestamp",
+            "description": "Read-only: get latest quote with source and timestamp",
             "parameters": {
                 "type": "object",
                 "properties": {"symbol": {"type": "string"}},
@@ -58,7 +97,7 @@ TOOLS_SCHEMA: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "get_option_chain",
-            "description": "Get option chain for an underlying",
+            "description": "Read-only: get option chain for an underlying",
             "parameters": {
                 "type": "object",
                 "properties": {"symbol": {"type": "string"}},
@@ -70,7 +109,10 @@ TOOLS_SCHEMA: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "get_portfolio",
-            "description": "Get paper portfolio positions and cash",
+            "description": (
+                "Read-only: paper portfolio positions/cash plus manual holdings. "
+                "Does not place orders or change live mode."
+            ),
             "parameters": {"type": "object", "properties": {}},
         },
     },
@@ -101,7 +143,7 @@ TOOLS_SCHEMA: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "run_screener",
-            "description": "Run a simple symbol screener",
+            "description": "Read-only: run a simple symbol screener over a universe",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -117,7 +159,7 @@ TOOLS_SCHEMA: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "search_symbols",
-            "description": "Search symbols across enabled markets",
+            "description": "Read-only: search symbols across enabled markets",
             "parameters": {
                 "type": "object",
                 "properties": {"query": {"type": "string"}},
@@ -129,7 +171,7 @@ TOOLS_SCHEMA: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "create_alert",
-            "description": "Create a price alert (above/below threshold)",
+            "description": "Create a price alert (above/below threshold). Does not trade or change live mode.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -139,6 +181,88 @@ TOOLS_SCHEMA: list[dict[str, Any]] = [
                 },
                 "required": ["symbol", "condition", "threshold"],
             },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "broker_health",
+            "description": (
+                "Read-only: healthcheck one broker (by name) or all registered adapters. "
+                "Never returns secrets or credentials."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "broker": {
+                        "type": "string",
+                        "description": "Optional adapter name (paper, zerodha, angel, alpaca). Omit for all.",
+                    }
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_watchlist",
+            "description": "Read-only: list symbols on the watchlist",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "add_watchlist_symbol",
+            "description": "Add a symbol to the watchlist (does not trade or change live mode)",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "symbol": {"type": "string"},
+                    "name": {"type": "string"},
+                    "asset_class": {"type": "string"},
+                },
+                "required": ["symbol"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "remove_watchlist_symbol",
+            "description": "Remove a symbol from the watchlist (does not trade or change live mode)",
+            "parameters": {
+                "type": "object",
+                "properties": {"symbol": {"type": "string"}},
+                "required": ["symbol"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_alerts",
+            "description": "Read-only: list price alert rules",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_jobs",
+            "description": "Read-only: list scheduled automation jobs",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "explain_last_error",
+            "description": (
+                "Read-only: summarize the most recent audit-log error/failure/rejection "
+                "(does not expose secrets)."
+            ),
+            "parameters": {"type": "object", "properties": {}},
         },
     },
 ]
@@ -164,20 +288,89 @@ async def _get_option_chain(args: dict[str, Any]) -> dict[str, Any]:
 async def _get_portfolio(_args: dict[str, Any]) -> dict[str, Any]:
     broker = get_paper_broker()
     marks: dict[str, Any] = {}
-    # best-effort marks
     for sym in list(broker.account.positions.keys()):
         try:
             q = await get_market_registry().get_quote(sym)
             marks[sym] = q.price
         except Exception:
             continue
-    return {
+    paper = {
         "cash": str(broker.account.cash),
         "currency": broker.account.currency,
         "realized_pnl": str(broker.account.realized_pnl),
         "equity": str(broker.equity(marks)),
         "positions": broker.positions_snapshot(marks),
-        "source": "paper_broker",
+    }
+    manual: list[dict[str, Any]] = []
+    try:
+        from sqlalchemy import select
+
+        from finagent.db import get_session_factory
+        from finagent.db.models import Holding
+
+        async with get_session_factory()() as session:
+            rows = (await session.execute(select(Holding))).scalars().all()
+            for r in rows:
+                manual.append(
+                    {
+                        "symbol": r.symbol,
+                        "quantity": r.quantity,
+                        "avg_cost": r.avg_cost,
+                        "account": r.account,
+                        "notes": r.notes,
+                    }
+                )
+    except Exception as exc:
+        manual = [{"error": str(exc)}]
+    return {
+        "paper": paper,
+        "manual_holdings": manual,
+        "source": "paper_broker+holdings",
+        "note": "Not financial advice. Paper and manual books are separate until you sync a broker.",
+    }
+
+
+async def _run_screener(args: dict[str, Any]) -> dict[str, Any]:
+    parsed = ScreenerArgs.model_validate(args)
+    universes = {
+        "india_bluechips": ["RELIANCE.NS", "TCS.NS", "INFY.NS", "HDFCBANK.NS", "ICICIBANK.NS"],
+        "crypto_majors": ["BTC/USDT", "ETH/USDT", "SOL/USDT"],
+        "watchlist": ["AAPL", "MSFT", "GOOGL", "RELIANCE.NS", "BTC/USDT"],
+    }
+    symbols = list(universes.get(parsed.universe, universes["watchlist"]))
+    if parsed.universe == "watchlist":
+        try:
+            from sqlalchemy import select
+
+            from finagent.db import get_session_factory
+            from finagent.db.models import WatchlistItem
+
+            async with get_session_factory()() as session:
+                rows = (await session.execute(select(WatchlistItem))).scalars().all()
+                if rows:
+                    symbols = [r.symbol for r in rows]
+        except Exception:
+            pass
+    rows = []
+    for sym in symbols:
+        try:
+            q = await get_market_registry().get_quote(sym)
+            rows.append(q.to_dict())
+        except Exception as exc:
+            rows.append({"symbol": sym, "error": str(exc)})
+
+    # Sort by change_pct when present (honest % movers within universe)
+    def _chg(r: dict[str, Any]) -> float:
+        try:
+            return float(r.get("change_pct") or 0)
+        except Exception:
+            return 0.0
+
+    rows_sorted = sorted(rows, key=_chg, reverse=True)
+    return {
+        "universe": parsed.universe,
+        "quotes": rows_sorted,
+        "as_of_note": "Each quote includes its own timestamp. Not exchange top-movers — your universe only.",
     }
 
 
@@ -204,28 +397,6 @@ async def _place_paper_order(args: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-async def _run_screener(args: dict[str, Any]) -> dict[str, Any]:
-    parsed = ScreenerArgs.model_validate(args)
-    universes = {
-        "india_bluechips": ["RELIANCE.NS", "TCS.NS", "INFY.NS", "HDFCBANK.NS", "ICICIBANK.NS"],
-        "crypto_majors": ["BTC/USDT", "ETH/USDT", "SOL/USDT"],
-        "watchlist": ["AAPL", "MSFT", "GOOGL", "RELIANCE.NS", "BTC/USDT"],
-    }
-    symbols = universes.get(parsed.universe, universes["watchlist"])
-    rows = []
-    for sym in symbols:
-        try:
-            q = await get_market_registry().get_quote(sym)
-            rows.append(q.to_dict())
-        except Exception as exc:
-            rows.append({"symbol": sym, "error": str(exc)})
-    return {
-        "universe": parsed.universe,
-        "quotes": rows,
-        "as_of_note": "Each quote includes its own timestamp",
-    }
-
-
 async def _search(args: dict[str, Any]) -> dict[str, Any]:
     parsed = SearchArgs.model_validate(args)
     return {"results": await get_market_registry().search(parsed.query)}
@@ -241,6 +412,175 @@ async def _create_alert(args: dict[str, Any]) -> dict[str, Any]:
     return await add_alert(parsed.symbol.upper(), cond, parsed.threshold)
 
 
+async def _broker_health(args: dict[str, Any]) -> dict[str, Any]:
+    parsed = BrokerHealthArgs.model_validate(args)
+    from finagent.brokers import get_broker_registry
+
+    registry = get_broker_registry()
+    adapters = registry.list_adapters()
+    if parsed.broker:
+        name = parsed.broker.strip().lower()
+        adapters = [a for a in adapters if a.get("name") == name]
+        if not adapters:
+            raise ValueError(f"Unknown broker: {parsed.broker}")
+
+    results: list[dict[str, Any]] = []
+    for meta in adapters:
+        name = str(meta.get("name") or "")
+        try:
+            adapter = registry.get(name)
+            hc = await adapter.healthcheck()
+        except Exception as exc:
+            hc = {"ok": False, "name": name, "status": f"error:{exc}", "error": str(exc)}
+        safe_meta = {
+            k: meta[k]
+            for k in ("name", "display_name", "supports_live", "configured", "session")
+            if k in meta
+        }
+        merged = {**safe_meta, **(hc if isinstance(hc, dict) else {"raw": hc})}
+        results.append(_sanitize_public(merged))
+    return {
+        "brokers": results,
+        "note": "Read-only healthcheck. Secrets and credentials are never included.",
+    }
+
+
+async def _list_watchlist(_args: dict[str, Any]) -> dict[str, Any]:
+    from sqlalchemy import select
+
+    from finagent.db import get_session_factory
+    from finagent.db.models import WatchlistItem
+
+    async with get_session_factory()() as session:
+        rows = (await session.execute(select(WatchlistItem))).scalars().all()
+        return {
+            "items": [
+                {
+                    "id": r.id,
+                    "symbol": r.symbol,
+                    "name": r.name,
+                    "asset_class": r.asset_class,
+                }
+                for r in rows
+            ]
+        }
+
+
+async def _add_watchlist_symbol(args: dict[str, Any]) -> dict[str, Any]:
+    parsed = WatchlistSymbolArgs.model_validate(args)
+    from sqlalchemy import select
+
+    from finagent.db import get_session_factory
+    from finagent.db.models import WatchlistItem
+
+    symbol = parsed.symbol.upper().strip()
+    async with get_session_factory()() as session:
+        existing = (
+            await session.execute(select(WatchlistItem).where(WatchlistItem.symbol == symbol))
+        ).scalar_one_or_none()
+        if existing:
+            return {"ok": True, "symbol": existing.symbol, "already_present": True}
+        item = WatchlistItem(symbol=symbol, name=parsed.name, asset_class=parsed.asset_class)
+        session.add(item)
+        await session.commit()
+        return {"ok": True, "symbol": item.symbol, "already_present": False}
+
+
+async def _remove_watchlist_symbol(args: dict[str, Any]) -> dict[str, Any]:
+    parsed = RemoveWatchlistArgs.model_validate(args)
+    from sqlalchemy import select
+
+    from finagent.db import get_session_factory
+    from finagent.db.models import WatchlistItem
+
+    symbol = parsed.symbol.upper().strip()
+    async with get_session_factory()() as session:
+        row = (
+            await session.execute(select(WatchlistItem).where(WatchlistItem.symbol == symbol))
+        ).scalar_one_or_none()
+        if row:
+            await session.delete(row)
+            await session.commit()
+            return {"ok": True, "symbol": symbol, "removed": True}
+        return {"ok": True, "symbol": symbol, "removed": False}
+
+
+async def _list_alerts(_args: dict[str, Any]) -> dict[str, Any]:
+    from finagent.scheduler import list_alerts
+
+    return {"alerts": await list_alerts()}
+
+
+async def _list_jobs(_args: dict[str, Any]) -> dict[str, Any]:
+    from finagent.scheduler import list_jobs
+
+    return {"jobs": await list_jobs()}
+
+
+def _detail_has_error(detail: Any) -> bool:
+    if not isinstance(detail, dict):
+        return False
+    if detail.get("error"):
+        return True
+    return detail.get("ok") is False
+
+
+async def _explain_last_error(_args: dict[str, Any]) -> dict[str, Any]:
+    from sqlalchemy import select
+
+    from finagent.db import get_session_factory
+    from finagent.db.models import AuditLog
+
+    async with get_session_factory()() as session:
+        rows = (
+            (await session.execute(select(AuditLog).order_by(AuditLog.id.desc()).limit(40)))
+            .scalars()
+            .all()
+        )
+
+    matches: list[dict[str, Any]] = []
+    for r in rows:
+        action = r.action or ""
+        action_l = action.lower()
+        detail = r.detail if isinstance(r.detail, dict) else {}
+        action_hit = any(x in action_l for x in ("error", "fail", "reject"))
+        detail_hit = _detail_has_error(detail)
+        if not (action_hit or detail_hit):
+            continue
+        safe_detail = _sanitize_public(detail) if detail else {}
+        err = safe_detail.get("error") or safe_detail.get("detail") or action
+        matches.append(
+            {
+                "id": r.id,
+                "actor": r.actor,
+                "action": action,
+                "error": err if isinstance(err, str) else str(err),
+                "detail": safe_detail,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            }
+        )
+
+    if not matches:
+        return {
+            "found": False,
+            "summary": "No recent error/fail/reject entries in the audit log.",
+            "recent": [],
+        }
+
+    last = matches[0]
+    summary = (
+        f"Last issue: action={last['action']} "
+        f"at {last.get('created_at') or 'unknown'} — {last.get('error')}"
+    )
+    return {
+        "found": True,
+        "summary": summary,
+        "last": last,
+        "recent": matches[:5],
+        "note": "Read-only audit summary. Secrets are redacted.",
+    }
+
+
 HANDLERS: dict[str, ToolHandler] = {
     "get_quote": _get_quote,
     "get_option_chain": _get_option_chain,
@@ -249,6 +589,13 @@ HANDLERS: dict[str, ToolHandler] = {
     "run_screener": _run_screener,
     "search_symbols": _search,
     "create_alert": _create_alert,
+    "broker_health": _broker_health,
+    "list_watchlist": _list_watchlist,
+    "add_watchlist_symbol": _add_watchlist_symbol,
+    "remove_watchlist_symbol": _remove_watchlist_symbol,
+    "list_alerts": _list_alerts,
+    "list_jobs": _list_jobs,
+    "explain_last_error": _explain_last_error,
 }
 
 

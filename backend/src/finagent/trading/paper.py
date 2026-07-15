@@ -99,12 +99,15 @@ class PaperBroker:
             meta=meta or {},
         )
 
-        if not force_open_market and not market_open(exchange, asset_class=asset_class):
-            if asset_class != "crypto":
-                order.transition(OrderStatus.REJECTED)
-                order.meta["reject_reason"] = "Market closed"
-                self.account.orders[key] = order
-                return order
+        if (
+            not force_open_market
+            and not market_open(exchange, asset_class=asset_class)
+            and asset_class != "crypto"
+        ):
+            order.transition(OrderStatus.REJECTED)
+            order.meta["reject_reason"] = "Market closed"
+            self.account.orders[key] = order
+            return order
 
         mark = D(price)
         reason = self._risk_check(order, mark)
