@@ -106,20 +106,24 @@ export function FnoPage() {
       let spot = 22000;
       let spotIsEstimate = true;
       try {
+        const controller = new AbortController();
+        const timer = window.setTimeout(() => controller.abort(), 5_000);
         const q = await api<{ price: string }>(
           `/api/market/quote/${encodeURIComponent(
             underlying.includes(".") || underlying.startsWith("^")
               ? underlying
               : `${underlying}.NS`,
           )}`,
+          { signal: controller.signal },
         );
+        window.clearTimeout(timer);
         const px = Number(q.price);
         if (px) {
           spot = px;
           spotIsEstimate = false;
         }
       } catch {
-        /* illustrative fallback */
+        /* illustrative fallback when quote is slow/unavailable */
       }
       const res = await api<Record<string, unknown>>("/api/trading/fno/greeks", {
         method: "POST",

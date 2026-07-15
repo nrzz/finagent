@@ -186,16 +186,18 @@ test.describe("A–Z desktop UI", () => {
     const expiry = tomorrow.toISOString().slice(0, 10);
 
     await page.getByPlaceholder(/NIFTY/i).fill("NIFTY");
-    // Fill controlled ticket fields via label-adjacent inputs (no auto chain load)
     const ticket = page.locator("div").filter({ has: page.getByText("Paper ticket", { exact: true }) }).last();
-    await page.locator("input").nth(1).fill(expiry);
-    await page.locator("input").nth(2).fill("22000");
-    await page.locator("input").nth(3).fill("100");
-    await page.locator("input").nth(4).fill("1");
+    const ticketInputs = ticket.locator("input");
+    await ticketInputs.nth(0).fill(expiry);
+    await ticketInputs.nth(1).fill("22000");
+    await ticketInputs.nth(2).fill("100");
+    await ticketInputs.nth(3).fill("1");
     await expect(page.getByRole("button", { name: "Buy paper" })).toBeEnabled({ timeout: 5_000 });
-    await page.getByRole("button", { name: "Greeks / margin" }).click();
-    await expect(page.getByText(/Lot|Margin|Δ|delta|Greeks failed/i).first()).toBeVisible({
-      timeout: 30_000,
+    await page.getByRole("button", { name: /Greeks/i }).click();
+    await expect(
+      page.getByText(/Educational (estimates|margin)|Lot \d+|Δ |Greeks failed/i).first(),
+    ).toBeVisible({
+      timeout: 45_000,
     });
     await shot(page, "07-fno-greeks");
 
@@ -204,7 +206,6 @@ test.describe("A–Z desktop UI", () => {
       timeout: 20_000,
     });
     await shot(page, "07-fno-order");
-    void ticket;
   });
 
   test("08 automation alerts jobs notifications", async () => {
