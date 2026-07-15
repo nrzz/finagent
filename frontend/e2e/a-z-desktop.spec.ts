@@ -186,12 +186,10 @@ test.describe("A–Z desktop UI", () => {
     const expiry = tomorrow.toISOString().slice(0, 10);
 
     await page.getByPlaceholder(/NIFTY/i).fill("NIFTY");
-    const ticket = page.locator("div").filter({ has: page.getByText("Paper ticket", { exact: true }) }).last();
-    const ticketInputs = ticket.locator("input");
-    await ticketInputs.nth(0).fill(expiry);
-    await ticketInputs.nth(1).fill("22000");
-    await ticketInputs.nth(2).fill("100");
-    await ticketInputs.nth(3).fill("1");
+    await page.getByTestId("fno-expiry").fill(expiry);
+    await page.getByTestId("fno-strike").fill("22000");
+    await page.getByTestId("fno-premium").fill("100");
+    await page.getByTestId("fno-lots").fill("1");
     await expect(page.getByRole("button", { name: "Buy paper" })).toBeEnabled({ timeout: 5_000 });
     await page.getByRole("button", { name: /Greeks/i }).click();
     await expect(

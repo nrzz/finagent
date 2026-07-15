@@ -254,13 +254,13 @@ export function FnoPage() {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card data-testid="fno-ticket">
           <CardHeader><CardTitle>Paper ticket</CardTitle></CardHeader>
           <CardContent className="space-y-3">
-            <div className="space-y-1"><Label>Expiry</Label><Input value={expiry} onChange={(e) => setExpiry(e.target.value)} /></div>
-            <div className="space-y-1"><Label>Strike</Label><Input value={strike} onChange={(e) => setStrike(e.target.value)} /></div>
-            <div className="space-y-1"><Label>Premium</Label><Input value={premium} onChange={(e) => setPremium(e.target.value)} /></div>
-            <div className="space-y-1"><Label>Lots</Label><Input value={lots} onChange={(e) => setLots(e.target.value)} /></div>
+            <div className="space-y-1"><Label>Expiry</Label><Input data-testid="fno-expiry" value={expiry} onChange={(e) => setExpiry(e.target.value)} /></div>
+            <div className="space-y-1"><Label>Strike</Label><Input data-testid="fno-strike" value={strike} onChange={(e) => setStrike(e.target.value)} /></div>
+            <div className="space-y-1"><Label>Premium</Label><Input data-testid="fno-premium" value={premium} onChange={(e) => setPremium(e.target.value)} /></div>
+            <div className="space-y-1"><Label>Lots</Label><Input data-testid="fno-lots" value={lots} onChange={(e) => setLots(e.target.value)} /></div>
             <div className="flex gap-2 flex-wrap">
               <Button variant="secondary" onClick={calcGreeks}>
                 Greeks / educational margin
