@@ -114,4 +114,4 @@ jobs:
             curl -sf http://127.0.0.1:8000/api/health && break
             sleep 1
           done
-          cd frontend && npx playwright test e2e/a-z-desktop.spec.ts --project=chromium
+          cd frontend && npx playwright test e2e/a-z-desktop.spec.ts --project=desktop

@@ -72,7 +72,7 @@ Each session: health → top backlog item → quality gates → update this file
 
 | ID | Item | Priority |
 |----|------|----------|
-| N1 | Confirm CI green on main post-push; triage any flake | P0 |
+| N1 | Confirm CI green on main post-push; triage any flake | done — e2e project name fixed (`desktop`) |
 | N2 | yfinance backoff / circuit breaker under alert scan | P1 |
 | N3 | Playwright regression after Settings/Trading UX | P1 |
 | N4 | SPAN-class F&O margin or remove illustrative fallbacks | P2 |
