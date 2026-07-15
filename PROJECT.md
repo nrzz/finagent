@@ -97,7 +97,7 @@ Each session: health → top backlog item → quality gates → update this file
 | Version | Date | Notes |
 |---------|------|-------|
 | 0.1.x | 2026-07 | Foundation: paper, chat, PWA/APK, Docker |
-| 0.2.0 | 2026-07-15 | Live brokers, notifications, reliability, steward tools, Sprint 4 foundations |
+| 0.2.0 | 2026-07-15 | Live brokers, notifications, reliability, steward tools, Sprint 4 foundations. Tag `v0.2.0` @ `03447c2`; follow-up CI/e2e fixes on main (green). |
 
 ---
 
