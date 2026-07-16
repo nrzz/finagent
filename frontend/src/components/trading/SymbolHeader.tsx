@@ -27,7 +27,7 @@ export function SymbolHeader({ symbol, quote, modeLabel }: Props) {
         </div>
         <div className="flex items-baseline gap-3 mt-0.5 flex-wrap">
           <span className="text-3xl font-mono font-semibold tabular-nums">
-            {quote?.price != null ? formatNumber(quote.price) : "—"}
+            {quote?.price != null ? formatNumber(quote.price) : "…"}
           </span>
           {chg != null && (
             <span className={cn("text-sm font-mono tabular-nums", up ? "text-up" : "text-down")}>

@@ -187,7 +187,7 @@ export function OrderTicket({
         <div className="space-y-1">
           <Label className="text-xs">LTP</Label>
           <div className="h-9 flex items-center px-2 rounded-md border border-input bg-muted/30 font-mono text-sm tabular-nums">
-            {ltp != null && String(ltp) !== "" ? formatNumber(String(ltp)) : "—"}
+            {ltp != null && String(ltp) !== "" ? formatNumber(String(ltp)) : "…"}
           </div>
         </div>
       </div>

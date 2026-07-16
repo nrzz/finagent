@@ -160,8 +160,17 @@ def create_app() -> FastAPI:
                 raise HTTPException(status_code=404, detail="Not found")
             candidate = frontend_dist / full_path
             if full_path and candidate.exists() and candidate.is_file():
-                return FileResponse(candidate)
-            return FileResponse(frontend_dist / "index.html")
+                # Hashed assets may be cached; HTML/SW must stay fresh after rebuilds
+                headers = {}
+                if full_path.endswith((".js", ".css", ".woff2", ".png", ".svg", ".webp")):
+                    headers["Cache-Control"] = "public, max-age=31536000, immutable"
+                else:
+                    headers["Cache-Control"] = "no-cache"
+                return FileResponse(candidate, headers=headers)
+            return FileResponse(
+                frontend_dist / "index.html",
+                headers={"Cache-Control": "no-cache"},
+            )
 
     return app
 

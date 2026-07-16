@@ -121,6 +121,9 @@ for /f "tokens=2 delims=:" %%a in ('ipconfig ^| findstr /c:"IPv4"') do (
 )
 
 echo  ----------------------------------------
+echo   If Settings/Trade look wrong after an update:
+echo   press Ctrl+Shift+R (hard refresh) once.
+echo  ----------------------------------------
 echo   PC browser:   http://127.0.0.1:8000
 if defined LANIP (
   echo   Phone / APK:  http://%LANIP%:8000

@@ -84,14 +84,33 @@ export function OrdersBlotter({ orders, mode, onRefresh, onCancel, onResetPaper 
         {filtered.map((o) => {
           const id = String(o.id || o.order_id || o.idempotency_key || "");
           const status = o.status;
+          const meta =
+            typeof o.meta === "object" && o.meta ? (o.meta as Record<string, unknown>) : null;
+          const rawPx =
+            o.avg_fill_price ??
+            o.fill_avg_price ??
+            o.fill_price ??
+            o.price ??
+            o.limit_price ??
+            meta?.mark_price ??
+            meta?.fill_price;
+          const pxNum = rawPx != null && rawPx !== "" ? Number(rawPx) : NaN;
+          const pxLabel =
+            Number.isFinite(pxNum) && pxNum !== 0
+              ? formatNumber(pxNum)
+              : isFilled(status)
+                ? "—"
+                : Number.isFinite(pxNum)
+                  ? formatNumber(pxNum)
+                  : "—";
           return (
             <div
               key={id || `${o.symbol}-${o.side}-${o.created_at}`}
               className="font-mono border-b border-border/40 py-1 flex justify-between gap-2 items-center"
             >
               <span>
-                {String(o.side)} {String(o.quantity ?? o.qty)} {String(o.symbol)} @{" "}
-                {formatNumber(Number(o.price || o.limit_price || 0))} · {String(status)}
+                {String(o.side)} {String(o.quantity ?? o.qty)} {String(o.symbol)} @ {pxLabel} ·{" "}
+                {String(status)}
               </span>
               {id && isCancellable(status) && (
                 <button

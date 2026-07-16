@@ -97,12 +97,14 @@ class Order:
         self.updated_at = datetime.now(UTC)
 
     def to_dict(self) -> dict[str, Any]:
+        display_price = self.avg_fill_price if self.avg_fill_price is not None else self.limit_price
         return {
             "idempotency_key": self.idempotency_key,
             "symbol": self.symbol,
             "side": self.side.value,
             "order_type": self.order_type.value,
             "quantity": str(self.quantity),
+            "price": str(display_price) if display_price is not None else None,
             "limit_price": str(self.limit_price) if self.limit_price is not None else None,
             "filled_quantity": str(self.filled_quantity),
             "avg_fill_price": str(self.avg_fill_price) if self.avg_fill_price is not None else None,

@@ -178,3 +178,7 @@ Price alerts and DCA jobs only fire while FinAgent is running.
 ## Risk reminder
 
 FinAgent is **not** financial advice. Markets involve risk of loss. Live trading stays locked until you turn it on in Settings (with re-auth). You are responsible for your own decisions.
+
+## After updating
+
+If Settings or Trade look outdated after pulling/updating, press Ctrl+Shift+R once (hard refresh). START.bat rebuilds the UI when source is newer; the app also auto-reloads when a new version is detected.

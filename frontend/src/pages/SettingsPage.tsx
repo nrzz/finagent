@@ -230,6 +230,10 @@ export function SettingsPage() {
 
   async function save(patch: Record<string, unknown>, needsReauth = false) {
     setMsg("");
+    if (needsReauth && !reauth.trim()) {
+      setMsg("Enter your FinAgent password above before saving this.");
+      return;
+    }
     try {
       await api("/api/settings", {
         method: "PUT",
@@ -586,7 +590,10 @@ export function SettingsPage() {
             <Button type="button" variant="ghost" size="sm" onClick={() => setShowAdvanced(!showAdvanced)}>
               {showAdvanced ? "Hide advanced" : "Show advanced"}
             </Button>
-            <Button onClick={() => save({ trading: data.trading }, true)}>Save trading (needs password)</Button>
+            <p className="text-xs text-muted-foreground">
+              Password required to save trading (including enabling Live or turning kill-switch off).
+            </p>
+            <Button onClick={() => save({ trading: data.trading }, true)}>Save trading</Button>
           </CardContent>
         </Card>
       )}

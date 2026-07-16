@@ -1,4 +1,4 @@
-import { NavLink, Outlet, useLocation, useNavigate, type To } from "react-router-dom";
+import { Link, NavLink, Outlet, useLocation, useNavigate, type To } from "react-router-dom";
 import { useEffect, useState } from "react";
 import {
   Bot,
@@ -104,28 +104,55 @@ export function AppShell() {
             <div className="text-xs text-muted-foreground">Self-hosted · Zero telemetry</div>
           </div>
         </div>
-        {nav.map((item) => (
-          <NavLink
-            key={item.id}
-            to={item.to}
-            end={item.id === "agent"}
-            className={({ isActive }) => {
-              const active = navActive(item, location.pathname, location.search, isActive);
-              return cn(
-                "flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors",
-                active ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/60",
-              );
-            }}
-          >
-            <item.icon className="h-4 w-4" />
-            <span className="flex-1">{item.label}</span>
-            {item.id === "automation" && unread > 0 && (
-              <span className="text-[10px] rounded-full bg-primary/90 text-primary-foreground px-1.5 min-w-[1.25rem] text-center">
-                {unread > 9 ? "9+" : unread}
-              </span>
-            )}
-          </NavLink>
-        ))}
+        {nav.map((item) => {
+          const tradeLike = item.kind === "trade" || item.kind === "fno";
+          const active = navActive(item, location.pathname, location.search, false);
+          const className = cn(
+            "flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors",
+            active ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/60",
+          );
+          const content = (
+            <>
+              <item.icon className="h-4 w-4" />
+              <span className="flex-1">{item.label}</span>
+              {item.id === "automation" && unread > 0 && (
+                <span className="text-[10px] rounded-full bg-primary/90 text-primary-foreground px-1.5 min-w-[1.25rem] text-center">
+                  {unread > 9 ? "9+" : unread}
+                </span>
+              )}
+            </>
+          );
+          if (tradeLike) {
+            return (
+              <Link
+                key={item.id}
+                to={item.to}
+                className={className}
+                aria-current={active ? "page" : undefined}
+              >
+                {content}
+              </Link>
+            );
+          }
+          return (
+            <NavLink
+              key={item.id}
+              to={item.to}
+              end={item.id === "agent"}
+              className={({ isActive }) => {
+                const linkActive = navActive(item, location.pathname, location.search, isActive);
+                return cn(
+                  "flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors",
+                  linkActive
+                    ? "bg-accent text-foreground"
+                    : "text-muted-foreground hover:bg-accent/60",
+                );
+              }}
+            >
+              {content}
+            </NavLink>
+          );
+        })}
         <div className="mt-auto pt-4 space-y-3">
           <p className="text-[11px] text-muted-foreground px-2 leading-relaxed">
             Not financial advice. Educational tool only. Markets involve risk of loss. Paper trading
@@ -206,23 +233,44 @@ export function AppShell() {
 
       <nav className="md:hidden fixed bottom-0 inset-x-0 border-t border-border bg-card/95 backdrop-blur z-30 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
         <div className="flex justify-start gap-1 overflow-x-auto px-1 py-2 scrollbar-none">
-          {nav.map((item) => (
-            <NavLink
-              key={item.id}
-              to={item.to}
-              end={item.id === "agent"}
-              className={({ isActive }) => {
-                const active = navActive(item, location.pathname, location.search, isActive);
-                return cn(
-                  "flex flex-col items-center gap-0.5 text-[10px] px-2 min-w-[3.25rem] shrink-0",
-                  active ? "text-primary" : "text-muted-foreground",
-                );
-              }}
-            >
-              <item.icon className="h-5 w-5" />
-              {item.label}
-            </NavLink>
-          ))}
+          {nav.map((item) => {
+            const tradeLike = item.kind === "trade" || item.kind === "fno";
+            const active = navActive(item, location.pathname, location.search, false);
+            const className = cn(
+              "flex flex-col items-center gap-0.5 text-[10px] px-2 min-w-[3.25rem] shrink-0",
+              active ? "text-primary" : "text-muted-foreground",
+            );
+            if (tradeLike) {
+              return (
+                <Link
+                  key={item.id}
+                  to={item.to}
+                  className={className}
+                  aria-current={active ? "page" : undefined}
+                >
+                  <item.icon className="h-5 w-5" />
+                  {item.label}
+                </Link>
+              );
+            }
+            return (
+              <NavLink
+                key={item.id}
+                to={item.to}
+                end={item.id === "agent"}
+                className={({ isActive }) => {
+                  const linkActive = navActive(item, location.pathname, location.search, isActive);
+                  return cn(
+                    "flex flex-col items-center gap-0.5 text-[10px] px-2 min-w-[3.25rem] shrink-0",
+                    linkActive ? "text-primary" : "text-muted-foreground",
+                  );
+                }}
+              >
+                <item.icon className="h-5 w-5" />
+                {item.label}
+              </NavLink>
+            );
+          })}
         </div>
       </nav>
     </div>
