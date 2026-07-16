@@ -65,14 +65,36 @@ class YFinanceAdapter(MarketDataAdapter):
         # yfinance has no great search; return query as candidate
         return [{"symbol": query.upper(), "name": query.upper(), "source": self.name}]
 
-    async def get_history(self, symbol: str, period: str = "1mo") -> list[dict[str, Any]]:
+    _VALID_INTERVALS = frozenset(
+        {
+            "1m",
+            "2m",
+            "5m",
+            "15m",
+            "30m",
+            "60m",
+            "90m",
+            "1h",
+            "1d",
+            "5d",
+            "1wk",
+            "1mo",
+            "3mo",
+        }
+    )
+
+    async def get_history(
+        self, symbol: str, period: str = "1mo", interval: str = "1d"
+    ) -> list[dict[str, Any]]:
         import asyncio
 
         import yfinance as yf
 
+        use_interval = interval if interval in self._VALID_INTERVALS else "1d"
+
         def _hist() -> list[dict[str, Any]]:
             t = yf.Ticker(symbol)
-            df = t.history(period=period)
+            df = t.history(period=period, interval=use_interval)
             out: list[dict[str, Any]] = []
             for idx, row in df.iterrows():
                 out.append(

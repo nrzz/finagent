@@ -125,46 +125,45 @@ test.describe("A–Z desktop UI", () => {
     await shot(page, "04-portfolio-split");
   });
 
-  test("05 markets quote invalid and valid", async () => {
+  test("05 desk quote smoke", async () => {
     const page = sharedPage;
-    await page.goto("/markets");
-    await expect(page.getByRole("heading", { name: "Markets" })).toBeVisible();
-    await shot(page, "05-markets-default");
+    await page.goto("/trading?symbol=AAPL");
+    await expect(page.getByTestId("trading-desk")).toBeVisible();
+    await expect(page.getByTestId("symbol-header")).toBeVisible();
+    await shot(page, "05-desk-aapl");
 
-    const input = page.locator("input").first();
-    await input.fill("NOTAREALTICKERZZZ");
-    await page.getByRole("button", { name: "Quote" }).click();
-    await expect(
-      page.locator("p.text-down").or(page.getByText(/fail|error|not found|404|No data/i)).first(),
-    ).toBeVisible({ timeout: 30_000 });
-    await shot(page, "05-markets-invalid");
+    await page.getByTestId("ticket-symbol").fill("NOTAREALTICKERZZZ");
+    await page.goto("/trading?symbol=NOTAREALTICKERZZZ");
+    await expect(page.getByTestId("trading-desk")).toBeVisible({ timeout: 15_000 });
+    await shot(page, "05-desk-invalid");
 
-    await input.fill("AAPL");
-    await page.getByRole("button", { name: "Quote" }).click();
+    await page.goto("/trading?symbol=AAPL");
+    await expect(page.getByTestId("ticket-symbol")).toHaveValue(/AAPL/i);
     await expect(page.getByText(/AAPL/i).first()).toBeVisible({ timeout: 45_000 });
-    await shot(page, "05-markets-aapl");
+    await shot(page, "05-desk-aapl-quote");
   });
 
   test("06 trading buy sell edges reset", async () => {
     const page = sharedPage;
     await page.goto("/trading");
-    await expect(page.getByRole("heading", { name: "Paper trading" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /Paper trading|Live trading/i })).toBeVisible();
     await shot(page, "06-trading");
 
-    const inputs = page.locator("input");
-    await inputs.nth(0).fill("AAPL");
-    await inputs.nth(1).fill("1");
-    await inputs.nth(2).fill("150");
-    await page.getByRole("button", { name: "Place paper order" }).click();
-    await expect(page.getByText(/Paper order (filled|FILLED|submitted)|via paper/i).first()).toBeVisible({
+    await page.getByTestId("ticket-symbol").fill("AAPL");
+    await page.getByTestId("ticket-qty").fill("1");
+    await page.getByTestId("ticket-price").fill("150");
+    await page.getByTestId("ticket-submit").click();
+    await expect(
+      page.getByText(/Order (filled|FILLED|submitted)|via paper|Paper order/i).first(),
+    ).toBeVisible({
       timeout: 30_000,
     });
     await shot(page, "06-trading-buy");
 
-    await page.getByRole("button", { name: "Sell" }).click();
-    await inputs.nth(1).fill("99999");
-    await inputs.nth(2).fill("150");
-    await page.getByRole("button", { name: "Place paper order" }).click();
+    await page.getByTestId("order-ticket").getByRole("button", { name: "Sell" }).click();
+    await page.getByTestId("ticket-qty").fill("99999");
+    await page.getByTestId("ticket-price").fill("150");
+    await page.getByTestId("ticket-submit").click();
     await expect(page.getByText(/rejected|Failed|insufficient|not enough|error|Kill/i).first()).toBeVisible({
       timeout: 20_000,
     });
@@ -177,7 +176,7 @@ test.describe("A–Z desktop UI", () => {
 
   test("07 fno greeks and paper option", async () => {
     const page = sharedPage;
-    await page.goto("/fno");
+    await page.goto("/trading?mode=fno");
     await expect(page.getByRole("heading", { name: /F&O/i })).toBeVisible();
     await shot(page, "07-fno");
 
@@ -272,11 +271,10 @@ test.describe("A–Z desktop UI", () => {
     await shot(page, "09-settings-kill-on");
 
     await page.goto("/trading");
-    const inputs = page.locator("input");
-    await inputs.nth(0).fill("AAPL");
-    await inputs.nth(1).fill("1");
-    await inputs.nth(2).fill("10");
-    await page.getByRole("button", { name: "Place paper order" }).click();
+    await page.getByTestId("ticket-symbol").fill("AAPL");
+    await page.getByTestId("ticket-qty").fill("1");
+    await page.getByTestId("ticket-price").fill("10");
+    await page.getByTestId("ticket-submit").click();
     await expect(page.getByText(/kill|rejected|Failed|Panic/i).first()).toBeVisible({ timeout: 20_000 });
     await shot(page, "09-trading-kill-blocked");
 

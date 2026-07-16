@@ -52,6 +52,22 @@ Home screen = **Agent chat**. Try chips like “Paper-buy 10 AAPL”.
 
 ---
 
+## Trading Desk
+
+Open **Trade** in the sidebar (or Portfolio → **Open desk**). One desk covers:
+
+| Mode | Use for |
+|------|---------|
+| **Equity** | Stocks / ETFs — chart + order ticket |
+| **F&O** | Options chain, educational greeks/margin, paper options |
+| **Crypto** | Spot pairs (e.g. `BTC/USDT`) |
+
+- Chart timeframes: switch intervals on the candle chart (1m → daily).
+- Keyboard: **B** / **S** set buy/sell side; **/** focuses the symbol field.
+- Quotes are **free delayed data** (yfinance / ccxt) — not a live broker feed. Fills from a connected broker may not match the delayed LTP you see on screen.
+
+---
+
 ## 4. Use on your phone (same Wi‑Fi)
 
 1. Keep **`START.bat`** running on the PC  

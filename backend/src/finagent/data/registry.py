@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 from typing import Any
@@ -90,8 +91,22 @@ class MarketDataRegistry:
             out.append(r)
         return out[:30]
 
-    async def get_history(self, symbol: str, period: str = "1mo") -> list[dict[str, Any]]:
-        return await self._pick(symbol).get_history(symbol, period)
+    async def get_history(
+        self, symbol: str, period: str = "1mo", interval: str = "1d"
+    ) -> list[dict[str, Any]]:
+        return await self._pick(symbol).get_history(symbol, period, interval)
+
+    async def get_quotes(self, symbols: list[str]) -> list[dict[str, Any]]:
+        async def _one(sym: str) -> dict[str, Any]:
+            try:
+                q = await self.get_quote(sym)
+                return q.to_dict()
+            except Exception as exc:
+                return {"symbol": sym, "error": str(exc)}
+
+        if not symbols:
+            return []
+        return list(await asyncio.gather(*[_one(s) for s in symbols]))
 
     async def get_option_chain(self, symbol: str) -> dict[str, Any]:
         return await self._pick(symbol).get_option_chain(symbol)

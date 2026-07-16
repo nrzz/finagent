@@ -63,17 +63,24 @@ class CCXTAdapter(MarketDataAdapter):
             {"symbol": self._normalize(query), "name": self._normalize(query), "source": self.name}
         ]
 
-    async def get_history(self, symbol: str, period: str = "1mo") -> list[dict[str, Any]]:
+    _INTERVAL_MAP = {"1d": "1d", "1h": "1h", "15m": "15m", "5m": "5m"}
+
+    async def get_history(
+        self, symbol: str, period: str = "1mo", interval: str = "1d"
+    ) -> list[dict[str, Any]]:
         import asyncio
         from datetime import timedelta
 
         pair = self._normalize(symbol)
-        limit = {"1d": 24, "5d": 120, "1mo": 30, "3mo": 90, "1y": 365}.get(period, 30)
+        timeframe = self._INTERVAL_MAP.get(interval, "1d")
+        days = {"1d": 1, "5d": 5, "1mo": 30, "3mo": 90, "1y": 365}.get(period, 30)
+        bars_per_day = {"1d": 1, "1h": 24, "15m": 96, "5m": 288}.get(timeframe, 1)
+        limit = min(max(days * bars_per_day, 1), 1000)
 
         def _ohlcv() -> list[dict[str, Any]]:
             ex = self._exchange()
-            since = int((datetime.now(UTC) - timedelta(days=limit)).timestamp() * 1000)
-            rows = ex.fetch_ohlcv(pair, timeframe="1d", since=since, limit=limit)
+            since = int((datetime.now(UTC) - timedelta(days=days)).timestamp() * 1000)
+            rows = ex.fetch_ohlcv(pair, timeframe=timeframe, since=since, limit=limit)
             return [
                 {
                     "time": datetime.fromtimestamp(r[0] / 1000, tz=UTC).isoformat(),

@@ -7,7 +7,7 @@ import { DashboardPage } from "@/pages/DashboardPage";
 import { ChatPage } from "@/pages/ChatPage";
 import { PortfolioPage } from "@/pages/PortfolioPage";
 import { MarketsPage } from "@/pages/MarketsPage";
-import { TradingPage } from "@/pages/TradingPage";
+import { TradingDeskPage } from "@/pages/TradingDeskPage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { FnoPage } from "@/pages/FnoPage";
 import { AutomationPage } from "@/pages/AutomationPage";
@@ -35,7 +35,7 @@ export default function App() {
         <Route path="chat" element={<Navigate to="/" replace />} />
         <Route path="portfolio" element={<PortfolioPage />} />
         <Route path="markets" element={<MarketsPage />} />
-        <Route path="trading" element={<TradingPage />} />
+        <Route path="trading" element={<TradingDeskPage />} />
         <Route path="fno" element={<FnoPage />} />
         <Route path="automation" element={<AutomationPage />} />
         <Route path="settings" element={<SettingsPage />} />

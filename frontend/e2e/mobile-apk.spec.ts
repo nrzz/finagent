@@ -45,9 +45,8 @@ test.describe("Mobile / APK viewport", () => {
     const tabs = [
       ["Dashboard", "/dashboard", "Dashboard"],
       ["Portfolio", "/portfolio", "Portfolio"],
-      ["Markets", "/markets", "Markets"],
-      ["Trading", "/trading", "Paper trading"],
-      ["F&O", "/fno", "F&O"],
+      ["Trade", "/trading", "Paper trading|Live trading"],
+      ["F&O", "/trading?mode=fno", "F&O"],
       ["Auto", "/automation", "Automation"],
       ["Settings", "/settings", "Settings"],
     ] as const;
@@ -82,11 +81,10 @@ test.describe("Mobile / APK viewport", () => {
   test("paper trade from trading ticket on mobile", async () => {
     const page = sharedPage;
     await page.goto("/trading");
-    const inputs = page.locator("input");
-    await inputs.nth(0).fill("AAPL");
-    await inputs.nth(1).fill("1");
-    await inputs.nth(2).fill("120");
-    await page.getByRole("button", { name: "Place paper order" }).click();
+    await page.getByTestId("ticket-symbol").fill("AAPL");
+    await page.getByTestId("ticket-qty").fill("1");
+    await page.getByTestId("ticket-price").fill("120");
+    await page.getByTestId("ticket-submit").click();
     await expect(page.getByText(/Order |kill|Failed|rejected/i).first()).toBeVisible({ timeout: 30_000 });
     await shot(page, "m-trading-order");
   });

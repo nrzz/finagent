@@ -37,7 +37,7 @@ We aim to acknowledge within 72 hours and ship a fix or mitigation ASAP.
 - LLM URL SSRF allowlist; webhook/Discord/Slack URLs SSRF-checked (private IPs blocked unless `FINAGENT_ALLOW_PRIVATE_WEBHOOKS=1`)
 - Agent cannot confirm paper fills without the trading UI / cannot enable live
 - Structured logs redact passwords, tokens, and secrets
-- Backups export ciphertext only — restore with the same `FINAGENT_SECRET_KEY`, then restart
+- Backups export ciphertext only ï¿½ restore with the same `FINAGENT_SECRET_KEY`, then restart
 
 ## Threat model (short)
 

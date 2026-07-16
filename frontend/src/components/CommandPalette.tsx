@@ -58,9 +58,8 @@ export function CommandPalette() {
               ["Agent Chat", "/"],
               ["Dashboard", "/dashboard"],
               ["Portfolio", "/portfolio"],
-              ["Markets", "/markets"],
-              ["Trading", "/trading"],
-              ["F&O", "/fno"],
+              ["Trade", "/trading"],
+              ["F&O", "/trading?mode=fno"],
               ["Automation", "/automation"],
               ["Settings", "/settings"],
             ].map(([label, path]) => (
@@ -84,7 +83,7 @@ export function CommandPalette() {
                   key={r.symbol}
                   value={r.symbol}
                   onSelect={() => {
-                    navigate(`/markets?symbol=${encodeURIComponent(r.symbol)}`);
+                    navigate(`/trading?symbol=${encodeURIComponent(r.symbol)}`);
                     setOpen(false);
                   }}
                   className="px-3 py-2 rounded-md text-sm cursor-pointer aria-selected:bg-accent"

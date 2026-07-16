@@ -52,7 +52,9 @@ class MarketDataAdapter(ABC):
     async def search(self, query: str) -> list[dict[str, str]]:
         return []
 
-    async def get_history(self, symbol: str, period: str = "1mo") -> list[dict[str, Any]]:
+    async def get_history(
+        self, symbol: str, period: str = "1mo", interval: str = "1d"
+    ) -> list[dict[str, Any]]:
         return []
 
     async def get_option_chain(self, symbol: str) -> dict[str, Any]:
@@ -84,8 +86,10 @@ class CachedAdapter(MarketDataAdapter):
     async def search(self, query: str) -> list[dict[str, str]]:
         return await self.inner.search(query)
 
-    async def get_history(self, symbol: str, period: str = "1mo") -> list[dict[str, Any]]:
-        return await self.inner.get_history(symbol, period)
+    async def get_history(
+        self, symbol: str, period: str = "1mo", interval: str = "1d"
+    ) -> list[dict[str, Any]]:
+        return await self.inner.get_history(symbol, period, interval)
 
     async def get_option_chain(self, symbol: str) -> dict[str, Any]:
         return await self.inner.get_option_chain(symbol)

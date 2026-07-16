@@ -1,10 +1,9 @@
-import { NavLink, Outlet, useNavigate } from "react-router-dom";
+import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useEffect, useState } from "react";
 import {
   Bot,
   Briefcase,
   LayoutDashboard,
-  LineChart,
   LogOut,
   Settings,
   Sparkles,
@@ -21,16 +20,17 @@ const nav = [
   { to: "/", label: "Agent", icon: Bot },
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { to: "/portfolio", label: "Portfolio", icon: Briefcase },
-  { to: "/markets", label: "Markets", icon: LineChart },
-  { to: "/trading", label: "Trading", icon: Zap },
-  { to: "/fno", label: "F&O", icon: CandlestickChart },
+  { to: "/trading", label: "Trade", icon: Zap },
+  { to: "/trading?mode=fno", label: "F&O", icon: CandlestickChart },
   { to: "/automation", label: "Auto", icon: Bell },
   { to: "/settings", label: "Settings", icon: Settings },
 ];
 
 export function AppShell() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [unread, setUnread] = useState(0);
+  const isTrading = location.pathname.includes("trading");
 
   useEffect(() => {
     let cancelled = false;
@@ -64,12 +64,25 @@ export function AppShell() {
             key={item.to}
             to={item.to}
             end={item.to === "/"}
-            className={({ isActive }) =>
-              cn(
+            className={({ isActive }) => {
+              const fnoActive =
+                item.to.includes("mode=fno") &&
+                location.pathname.includes("trading") &&
+                new URLSearchParams(location.search).get("mode") === "fno";
+              const tradeActive =
+                item.to === "/trading" &&
+                location.pathname.includes("trading") &&
+                new URLSearchParams(location.search).get("mode") !== "fno";
+              const active = item.to.includes("mode=fno")
+                ? fnoActive
+                : item.to === "/trading"
+                  ? tradeActive
+                  : isActive;
+              return cn(
                 "flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors",
-                isActive ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/60",
-              )
-            }
+                active ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/60",
+              );
+            }}
           >
             <item.icon className="h-4 w-4" />
             <span className="flex-1">{item.label}</span>
@@ -124,7 +137,12 @@ export function AppShell() {
             <CommandPalette />
           </div>
         </header>
-        <div className="p-3 md:p-6 max-w-7xl mx-auto w-full flex-1">
+        <div
+          className={cn(
+            "p-3 md:p-6 mx-auto w-full flex-1",
+            isTrading ? "max-w-none" : "max-w-7xl",
+          )}
+        >
           <Outlet />
         </div>
         <footer className="border-t border-border/60 px-4 py-2 text-center text-[10px] md:text-[11px] text-muted-foreground leading-relaxed shrink-0 hidden md:block">
@@ -141,12 +159,25 @@ export function AppShell() {
               key={item.to}
               to={item.to}
               end={item.to === "/"}
-              className={({ isActive }) =>
-                cn(
+              className={({ isActive }) => {
+                const fnoActive =
+                  item.to.includes("mode=fno") &&
+                  location.pathname.includes("trading") &&
+                  new URLSearchParams(location.search).get("mode") === "fno";
+                const tradeActive =
+                  item.to === "/trading" &&
+                  location.pathname.includes("trading") &&
+                  new URLSearchParams(location.search).get("mode") !== "fno";
+                const active = item.to.includes("mode=fno")
+                  ? fnoActive
+                  : item.to === "/trading"
+                    ? tradeActive
+                    : isActive;
+                return cn(
                   "flex flex-col items-center gap-0.5 text-[10px] px-2 min-w-[3.25rem] shrink-0",
-                  isActive ? "text-primary" : "text-muted-foreground",
-                )
-              }
+                  active ? "text-primary" : "text-muted-foreground",
+                );
+              }}
             >
               <item.icon className="h-5 w-5" />
               {item.label}

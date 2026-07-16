@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, Input, Label } from "@/components/ui/primitives";
@@ -55,11 +56,16 @@ export function PortfolioPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold">Portfolio</h1>
-        <p className="text-sm text-muted-foreground">
-          Manual entry · CSV · XIRR · corporate actions · Decimal P&L
-        </p>
+      <div className="flex items-end justify-between gap-4 flex-wrap">
+        <div>
+          <h1 className="text-2xl font-semibold">Portfolio</h1>
+          <p className="text-sm text-muted-foreground">
+            Manual entry · CSV · XIRR · corporate actions · Decimal P&L
+          </p>
+        </div>
+        <Button asChild variant="secondary">
+          <Link to="/trading">Open desk</Link>
+        </Button>
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
@@ -119,6 +125,7 @@ export function PortfolioPage() {
                   <th>Avg cost</th>
                   <th>Mkt value</th>
                   <th>Unrealized</th>
+                  <th>Trade</th>
                 </tr>
               </thead>
               <tbody>
@@ -130,6 +137,14 @@ export function PortfolioPage() {
                     <td>{h.market_value ? formatNumber(h.market_value) : "—"}</td>
                     <td className={Number(h.unrealized_pnl || 0) >= 0 ? "text-up" : "text-down"}>
                       {h.unrealized_pnl ? formatNumber(h.unrealized_pnl) : "—"}
+                    </td>
+                    <td>
+                      <Link
+                        to={`/trading?symbol=${encodeURIComponent(h.symbol)}`}
+                        className="text-primary underline-offset-2 hover:underline font-sans text-xs"
+                      >
+                        Trade
+                      </Link>
                     </td>
                   </tr>
                 ))}

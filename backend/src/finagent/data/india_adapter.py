@@ -80,10 +80,12 @@ class IndiaAdapter(MarketDataAdapter):
             pass
         return [{"symbol": self._normalize(query), "name": query, "source": self.name}]
 
-    async def get_history(self, symbol: str, period: str = "1mo") -> list[dict[str, Any]]:
+    async def get_history(
+        self, symbol: str, period: str = "1mo", interval: str = "1d"
+    ) -> list[dict[str, Any]]:
         if symbol.strip().isdigit() or symbol.upper().startswith("MF:"):
             return []
-        return await self._yf.get_history(self._normalize(symbol), period)
+        return await self._yf.get_history(self._normalize(symbol), period, interval)
 
     async def get_option_chain(self, symbol: str) -> dict[str, Any]:
         # Best-effort via yfinance for index options when available

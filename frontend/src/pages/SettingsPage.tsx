@@ -303,6 +303,10 @@ export function SettingsPage() {
             <p className="text-xs text-muted-foreground">
               Safe Mode: Paper on, confirm on. Live money needs your password and a connected broker.
             </p>
+            <p className="text-xs text-muted-foreground">
+              Market quotes use free delayed data (yfinance/ccxt). Live broker orders are separate — quotes
+              may lag fills.
+            </p>
             <Label>Mode</Label>
             <select
               className="h-10 w-full rounded-md border border-input bg-background px-2 text-sm"

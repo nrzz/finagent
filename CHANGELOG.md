@@ -9,7 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- (none yet)
+- **Trading Desk** unified UX: Equity / F&O / Crypto modes, candle chart, dense order ticket, watchlist, blotter, B/S keyboard shortcuts
+- Batch market quotes (`GET /api/market/quotes`) and SSE quote stream (`GET /api/market/stream`)
+- Dashboard watch strip (delayed free quotes) and Portfolio / position **Trade** deep-links to the desk
+- Order ticket **Alert on symbol** → Automation; Settings note that quotes may lag live fills
+
+### Changed
+
+- Nav label **Trade** (replaces separate Markets page flow); F&O lives under `/trading?mode=fno`
+- Playwright A–Z desk smoke (tests 05–07) and mobile nav paths
 
 ## [0.2.0] — 2026-07-15
 

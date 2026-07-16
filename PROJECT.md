@@ -68,13 +68,23 @@ Each session: health → top backlog item → quality gates → update this file
 | T1 | Tauri desktop | guide + placeholder; full app later |
 | B1 | Backtesting + strategy YAML | DCA stub in 0.2.0; workspace later |
 
+### Trading Desk 0.3
+
+| ID | Item | Status |
+|----|------|--------|
+| TD1 | Unified Trading Desk (Equity / F&O / Crypto) | done |
+| TD2 | Candle chart + batch quotes + SSE quote stream | done |
+| TD3 | Dense order ticket, blotter, watchlist, B/S shortcuts | done |
+| TD4 | Portfolio/Dashboard Trade deep-links + delayed-data honesty | done |
+| TD5 | Playwright desk smoke (05–07) + HOW-TO / changelog | done |
+
 ### Next after 0.2.0
 
 | ID | Item | Priority |
 |----|------|----------|
 | N1 | Confirm CI green on main post-push; triage any flake | done — e2e project name fixed (`desktop`) |
 | N2 | yfinance backoff / circuit breaker under alert scan | P1 |
-| N3 | Playwright regression after Settings/Trading UX | P1 |
+| N3 | Playwright regression after Settings/Trading UX | done — desk e2e (Wave 5) |
 | N4 | SPAN-class F&O margin or remove illustrative fallbacks | P2 |
 
 ---
@@ -98,6 +108,7 @@ Each session: health → top backlog item → quality gates → update this file
 |---------|------|-------|
 | 0.1.x | 2026-07 | Foundation: paper, chat, PWA/APK, Docker |
 | 0.2.0 | 2026-07-15 | Live brokers, notifications, reliability, steward tools, Sprint 4 foundations. Tag `v0.2.0` @ `03447c2`; follow-up CI/e2e fixes on main (green). |
+| 0.3.0 (wip) | 2026-07-16 | Trading Desk unified UX: Equity/F&O/Crypto modes, candles, batch quotes, SSE stream, desk deep-links, delayed-data honesty. |
 
 ---
 

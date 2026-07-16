@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import csv
 import io
+import json
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -34,6 +37,11 @@ from finagent.trading.persist import save_paper_to_db
 router = APIRouter(prefix="/api", tags=["market"])
 
 
+def parse_symbols(symbols: str, *, max_symbols: int = 40) -> list[str]:
+    """Split a comma-separated symbols query into a capped list."""
+    return [s.strip() for s in symbols.split(",") if s.strip()][:max_symbols]
+
+
 @router.get("/market/quote/{symbol:path}")
 async def quote(symbol: str, user: User = Depends(get_current_user)) -> dict[str, Any]:
     try:
@@ -50,13 +58,60 @@ async def search(q: str, user: User = Depends(get_current_user)) -> dict[str, An
 
 @router.get("/market/history/{symbol:path}")
 async def history(
-    symbol: str, period: str = "1mo", user: User = Depends(get_current_user)
+    symbol: str,
+    period: str = "1mo",
+    interval: str = "1d",
+    user: User = Depends(get_current_user),
 ) -> dict[str, Any]:
     try:
-        rows = await get_market_registry().get_history(symbol, period)
-        return {"symbol": symbol, "period": period, "candles": rows}
+        rows = await get_market_registry().get_history(symbol, period, interval)
+        out: dict[str, Any] = {
+            "symbol": symbol,
+            "period": period,
+            "interval": interval,
+            "candles": rows,
+        }
+        if isinstance(rows, dict):
+            out["candles"] = rows.get("candles", [])
+            if rows.get("note") is not None:
+                out["note"] = rows["note"]
+        return out
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/market/quotes")
+async def quotes(
+    symbols: str,
+    user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    syms = parse_symbols(symbols, max_symbols=40)
+    try:
+        return {"quotes": await get_market_registry().get_quotes(syms)}
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/market/stream")
+async def market_stream(
+    symbols: str,
+    interval_s: int = 5,
+    user: User = Depends(get_current_user),
+) -> StreamingResponse:
+    syms = parse_symbols(symbols, max_symbols=40)
+    poll_s = max(3, min(30, interval_s))
+
+    async def event_gen():
+        try:
+            while True:
+                batch = await get_market_registry().get_quotes(syms)
+                payload = json.dumps({"type": "quotes", "quotes": batch})
+                yield f"data: {payload}\n\n"
+                await asyncio.sleep(poll_s)
+        except asyncio.CancelledError:
+            return
+
+    return StreamingResponse(event_gen(), media_type="text/event-stream")
 
 
 @router.get("/market/options/{symbol:path}")
