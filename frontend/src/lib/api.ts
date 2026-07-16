@@ -33,14 +33,30 @@ export async function api<T = unknown>(
     }
   }
   if (!res.ok) {
-    let detail = res.statusText;
+    let detail: unknown = res.statusText;
     try {
       const body = await res.json();
-      detail = body.detail || JSON.stringify(body);
+      detail = body.detail ?? body;
     } catch {
       /* ignore */
     }
-    throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
+    if (Array.isArray(detail)) {
+      detail = detail
+        .map((d) => {
+          if (typeof d === "string") return d;
+          if (d && typeof d === "object" && "msg" in d) {
+            const loc = Array.isArray((d as { loc?: unknown }).loc)
+              ? (d as { loc: unknown[] }).loc.join(".")
+              : "";
+            return `${loc ? `${loc}: ` : ""}${(d as { msg: string }).msg}`;
+          }
+          return JSON.stringify(d);
+        })
+        .join("; ");
+    } else if (detail && typeof detail === "object") {
+      detail = JSON.stringify(detail);
+    }
+    throw new Error(typeof detail === "string" ? detail : String(detail));
   }
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;

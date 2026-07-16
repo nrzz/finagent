@@ -54,17 +54,19 @@ export function CommandPalette() {
             No results
           </Command.Empty>
           <Command.Group heading="Navigate">
-            {[
-              ["Agent Chat", "/"],
-              ["Dashboard", "/dashboard"],
-              ["Portfolio", "/portfolio"],
-              ["Trade", "/trading"],
-              ["F&O", "/trading?mode=fno"],
-              ["Automation", "/automation"],
-              ["Settings", "/settings"],
-            ].map(([label, path]) => (
+            {(
+              [
+                ["Agent Chat", "/"],
+                ["Dashboard", "/dashboard"],
+                ["Portfolio", "/portfolio"],
+                ["Trade", "/trading"],
+                ["F&O", { pathname: "/trading", search: "?mode=fno" }],
+                ["Automation", "/automation"],
+                ["Settings", "/settings"],
+              ] as const
+            ).map(([label, path]) => (
               <Command.Item
-                key={path}
+                key={label}
                 value={label}
                 onSelect={() => {
                   navigate(path);

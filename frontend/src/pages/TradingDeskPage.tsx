@@ -96,17 +96,17 @@ export function TradingDeskPage() {
     let mode = tradingMode;
     try {
       const s = await api<{
-        settings: { trading: { mode: string } };
+        settings?: { trading?: { mode?: string } };
       }>("/api/settings");
-      mode = s.settings.trading.mode;
+      mode = s.settings?.trading?.mode || "paper";
       setTradingMode(mode);
     } catch {
       /* ignore */
     }
     try {
       const endpoint = mode === "live" ? "/api/trading/orders" : "/api/trading/blotter";
-      const res = await api<{ orders: Record<string, unknown>[] }>(endpoint);
-      setOrders(res.orders || []);
+      const res = await api<{ orders?: Record<string, unknown>[] }>(endpoint);
+      setOrders(Array.isArray(res.orders) ? res.orders : []);
     } catch {
       /* ignore */
     }
@@ -115,7 +115,8 @@ export function TradingDeskPage() {
         paper?: { cash?: string; positions?: PositionRow[] };
       }>("/api/portfolio");
       setCash(pf.paper?.cash ?? null);
-      setPositions(pf.paper?.positions || []);
+      const pos = pf.paper?.positions;
+      setPositions(Array.isArray(pos) ? pos.filter((p) => p && typeof p.symbol === "string") : []);
     } catch {
       /* ignore */
     }
@@ -134,9 +135,11 @@ export function TradingDeskPage() {
   }, [refreshBook]);
 
   const streamSymbols = useMemo(() => {
-    const set = new Set<string>([...watchlist, symbol]);
-    for (const p of positions) set.add(p.symbol);
-    return [...set].filter(Boolean);
+    const set = new Set<string>([...(watchlist || []), symbol].filter(Boolean));
+    for (const p of positions || []) {
+      if (p?.symbol) set.add(p.symbol);
+    }
+    return [...set];
   }, [watchlist, symbol, positions]);
 
   useEffect(() => {

@@ -55,6 +55,7 @@ if errorlevel 1 (
   exit /b 1
 )
 
+set "NEED_UI_BUILD="
 if not exist "frontend\node_modules\" (
   echo [3/4] Installing website packages (first time)...
   pushd frontend
@@ -65,12 +66,38 @@ if not exist "frontend\node_modules\" (
     pause
     exit /b 1
   )
-  call npm run build
+  set NEED_UI_BUILD=1
   popd
-) else if not exist "frontend\dist\index.html" (
+)
+
+if not exist "frontend\dist\index.html" set NEED_UI_BUILD=1
+
+REM Rebuild when package.json or git HEAD is newer than dist (avoids stale Settings UI)
+if not defined NEED_UI_BUILD if exist "frontend\dist\index.html" (
+  powershell -NoProfile -Command ^
+    "$dist=(Get-Item 'frontend\dist\index.html').LastWriteTime; $stale=$false; if ((Get-Item 'frontend\package.json').LastWriteTime -gt $dist) { $stale=$true }; if ((Test-Path '.git\HEAD') -and ((Get-Item '.git\HEAD').LastWriteTime -gt $dist)) { $stale=$true }; if ($stale) { exit 1 } else { exit 0 }"
+  if errorlevel 1 set NEED_UI_BUILD=1
+)
+
+if defined NEED_UI_BUILD (
   echo [3/4] Building the website UI...
   pushd frontend
+  if not exist "node_modules\" (
+    call npm install
+    if errorlevel 1 (
+      echo npm install failed.
+      popd
+      pause
+      exit /b 1
+    )
+  )
   call npm run build
+  if errorlevel 1 (
+    echo Frontend build failed.
+    popd
+    pause
+    exit /b 1
+  )
   popd
 ) else (
   echo [3/4] Website UI ready.

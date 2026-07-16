@@ -15,5 +15,10 @@ export function getApiBase(): string {
 }
 
 export function setApiBase(url: string) {
-  localStorage.setItem(STORAGE_KEY, url.replace(/\/$/, ""));
+  const cleaned = url.replace(/\/$/, "");
+  if (!cleaned) {
+    localStorage.removeItem(STORAGE_KEY);
+    return;
+  }
+  localStorage.setItem(STORAGE_KEY, cleaned);
 }

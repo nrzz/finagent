@@ -109,7 +109,21 @@ async def _load_or_create_settings_row(db: AsyncSession) -> SettingsRow:
 
 async def sync_settings_from_db(db: AsyncSession) -> AppSettings:
     row = await _load_or_create_settings_row(db)
-    settings = AppSettings.model_validate(row.payload or {})
+    payload = row.payload if isinstance(row.payload, dict) else {}
+    try:
+        settings = AppSettings.model_validate(payload or {})
+    except Exception:
+        # Repair corrupt / legacy rows so Settings GET never 500s the UI
+        repaired: dict[str, Any] = dict(payload or {})
+        for key in ("llm", "markets", "trading", "appearance", "notifications"):
+            if key in repaired and not isinstance(repaired.get(key), dict):
+                repaired.pop(key, None)
+        try:
+            settings = AppSettings.model_validate(repaired)
+        except Exception:
+            settings = AppSettings()
+        row.payload = settings.model_dump(mode="json")
+        await db.commit()
     settings.llm.ensure_profiles()
     settings.llm.sync_legacy_from_active()
     set_settings(settings)
@@ -207,6 +221,28 @@ async def update_settings(
                     elif ch in base:
                         merged_n[ch] = base[ch]
                 merged[key] = merged_n
+            elif key == "markets":
+                # Deep-merge crypto so partial {enabled} does not wipe exchanges
+                merged_m = {
+                    **base,
+                    **{k: v for k, v in patch.items() if k != "crypto"},
+                }
+                if "crypto" in patch and isinstance(patch["crypto"], dict):
+                    merged_m["crypto"] = {**(base.get("crypto") or {}), **patch["crypto"]}
+                elif "crypto" in patch:
+                    merged_m["crypto"] = patch["crypto"]
+                merged[key] = merged_m
+            elif key == "trading":
+                # Deep-merge risk so partial risk patches stay valid
+                merged_t = {
+                    **base,
+                    **{k: v for k, v in patch.items() if k != "risk"},
+                }
+                if "risk" in patch and isinstance(patch["risk"], dict):
+                    merged_t["risk"] = {**(base.get("risk") or {}), **patch["risk"]}
+                elif "risk" in patch:
+                    merged_t["risk"] = patch["risk"]
+                merged[key] = merged_t
             else:
                 merged[key] = {**base, **patch}
     try:
@@ -216,6 +252,15 @@ async def update_settings(
             _apply_legacy_llm_patch(new_settings, body.settings["llm"])
         new_settings.llm.sync_legacy_from_active()
     except Exception as exc:
+        from pydantic import ValidationError
+
+        if isinstance(exc, ValidationError):
+            # Human-readable field errors for the Settings UI
+            parts = []
+            for err in exc.errors():
+                loc = ".".join(str(x) for x in err.get("loc", ()))
+                parts.append(f"{loc}: {err.get('msg', 'invalid')}" if loc else str(err.get("msg")))
+            raise HTTPException(status_code=400, detail="; ".join(parts) or str(exc)) from exc
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     sensitive = False

@@ -1,4 +1,4 @@
-import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { NavLink, Outlet, useLocation, useNavigate, type To } from "react-router-dom";
 import { useEffect, useState } from "react";
 import {
   Bot,
@@ -12,24 +12,49 @@ import {
   Bell,
 } from "lucide-react";
 import { api, clearToken } from "@/lib/api";
+import { getApiBase, setApiBase } from "@/lib/native";
 import { Button } from "@/components/ui/button";
 import { CommandPalette } from "@/components/CommandPalette";
 import { cn } from "@/lib/utils";
 
-const nav = [
-  { to: "/", label: "Agent", icon: Bot },
-  { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { to: "/portfolio", label: "Portfolio", icon: Briefcase },
-  { to: "/trading", label: "Trade", icon: Zap },
-  { to: "/trading?mode=fno", label: "F&O", icon: CandlestickChart },
-  { to: "/automation", label: "Auto", icon: Bell },
-  { to: "/settings", label: "Settings", icon: Settings },
+type NavItem = {
+  id: string;
+  to: To;
+  label: string;
+  icon: typeof Bot;
+  kind?: "trade" | "fno";
+};
+
+const nav: NavItem[] = [
+  { id: "agent", to: "/", label: "Agent", icon: Bot },
+  { id: "dashboard", to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { id: "portfolio", to: "/portfolio", label: "Portfolio", icon: Briefcase },
+  { id: "trade", to: "/trading", label: "Trade", icon: Zap, kind: "trade" },
+  // Object form: RR must not treat "?mode=fno" as part of the pathname
+  {
+    id: "fno",
+    to: { pathname: "/trading", search: "?mode=fno" },
+    label: "F&O",
+    icon: CandlestickChart,
+    kind: "fno",
+  },
+  { id: "automation", to: "/automation", label: "Auto", icon: Bell },
+  { id: "settings", to: "/settings", label: "Settings", icon: Settings },
 ];
+
+function navActive(item: NavItem, pathname: string, search: string, isActive: boolean): boolean {
+  const mode = new URLSearchParams(search).get("mode");
+  const onTrading = pathname.includes("trading");
+  if (item.kind === "fno") return onTrading && mode === "fno";
+  if (item.kind === "trade") return onTrading && mode !== "fno";
+  return isActive;
+}
 
 export function AppShell() {
   const navigate = useNavigate();
   const location = useLocation();
   const [unread, setUnread] = useState(0);
+  const [apiDown, setApiDown] = useState(false);
   const isTrading = location.pathname.includes("trading");
 
   useEffect(() => {
@@ -49,6 +74,26 @@ export function AppShell() {
     };
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    const check = () => {
+      const base = getApiBase();
+      fetch(`${base}/api/health`, { method: "GET" })
+        .then((r) => {
+          if (!cancelled) setApiDown(!r.ok);
+        })
+        .catch(() => {
+          if (!cancelled) setApiDown(true);
+        });
+    };
+    check();
+    const id = window.setInterval(check, 15000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, []);
+
   return (
     <div className="min-h-screen flex flex-col md:flex-row bg-background">
       <aside className="hidden md:flex md:w-60 flex-col border-r border-border p-4 gap-2">
@@ -61,23 +106,11 @@ export function AppShell() {
         </div>
         {nav.map((item) => (
           <NavLink
-            key={item.to}
+            key={item.id}
             to={item.to}
-            end={item.to === "/"}
+            end={item.id === "agent"}
             className={({ isActive }) => {
-              const fnoActive =
-                item.to.includes("mode=fno") &&
-                location.pathname.includes("trading") &&
-                new URLSearchParams(location.search).get("mode") === "fno";
-              const tradeActive =
-                item.to === "/trading" &&
-                location.pathname.includes("trading") &&
-                new URLSearchParams(location.search).get("mode") !== "fno";
-              const active = item.to.includes("mode=fno")
-                ? fnoActive
-                : item.to === "/trading"
-                  ? tradeActive
-                  : isActive;
+              const active = navActive(item, location.pathname, location.search, isActive);
               return cn(
                 "flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors",
                 active ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/60",
@@ -86,7 +119,7 @@ export function AppShell() {
           >
             <item.icon className="h-4 w-4" />
             <span className="flex-1">{item.label}</span>
-            {item.to === "/automation" && unread > 0 && (
+            {item.id === "automation" && unread > 0 && (
               <span className="text-[10px] rounded-full bg-primary/90 text-primary-foreground px-1.5 min-w-[1.25rem] text-center">
                 {unread > 9 ? "9+" : unread}
               </span>
@@ -112,6 +145,25 @@ export function AppShell() {
       </aside>
 
       <main className="flex-1 overflow-auto pb-24 md:pb-10 flex flex-col min-h-0">
+        {apiDown && (
+          <div className="shrink-0 border-b border-amber-500/40 bg-amber-500/10 px-4 py-2 text-sm text-amber-100 flex flex-wrap items-center gap-2 justify-between">
+            <span>
+              Cannot reach the FinAgent API. Keep START.bat running, or clear a wrong phone/APK server
+              URL.
+            </span>
+            <Button
+              size="sm"
+              variant="outline"
+              className="border-amber-500/50"
+              onClick={() => {
+                setApiBase("");
+                window.location.reload();
+              }}
+            >
+              Clear API URL & reload
+            </Button>
+          </div>
+        )}
         <header className="sticky top-0 z-20 border-b border-border bg-background/80 backdrop-blur px-4 py-3 flex items-center justify-between shrink-0 gap-2">
           <div className="text-sm text-muted-foreground">
             Press <kbd className="px-1.5 py-0.5 rounded border text-xs">Ctrl K</kbd> to search
@@ -156,23 +208,11 @@ export function AppShell() {
         <div className="flex justify-start gap-1 overflow-x-auto px-1 py-2 scrollbar-none">
           {nav.map((item) => (
             <NavLink
-              key={item.to}
+              key={item.id}
               to={item.to}
-              end={item.to === "/"}
+              end={item.id === "agent"}
               className={({ isActive }) => {
-                const fnoActive =
-                  item.to.includes("mode=fno") &&
-                  location.pathname.includes("trading") &&
-                  new URLSearchParams(location.search).get("mode") === "fno";
-                const tradeActive =
-                  item.to === "/trading" &&
-                  location.pathname.includes("trading") &&
-                  new URLSearchParams(location.search).get("mode") !== "fno";
-                const active = item.to.includes("mode=fno")
-                  ? fnoActive
-                  : item.to === "/trading"
-                    ? tradeActive
-                    : isActive;
+                const active = navActive(item, location.pathname, location.search, isActive);
                 return cn(
                   "flex flex-col items-center gap-0.5 text-[10px] px-2 min-w-[3.25rem] shrink-0",
                   active ? "text-primary" : "text-muted-foreground",

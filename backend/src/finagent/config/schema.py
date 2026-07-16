@@ -127,6 +127,15 @@ class CryptoMarketsConfig(BaseModel):
     enabled: bool = True
     exchanges: list[str] = Field(default_factory=lambda: ["binance"])
 
+    @field_validator("exchanges", mode="before")
+    @classmethod
+    def coerce_exchanges(cls, v: Any) -> Any:
+        if v is None:
+            return ["binance"]
+        if isinstance(v, str):
+            return [v]
+        return v
+
 
 class MarketsConfig(BaseModel):
     stocks_global: bool = True
@@ -134,11 +143,49 @@ class MarketsConfig(BaseModel):
     crypto: CryptoMarketsConfig = Field(default_factory=CryptoMarketsConfig)
     quote_cache_ttl_s: int = Field(default=30, ge=5, le=3600)
 
+    @field_validator("crypto", mode="before")
+    @classmethod
+    def coerce_crypto(cls, v: Any) -> Any:
+        # Legacy / corrupted payloads sometimes store crypto as a bare bool
+        if isinstance(v, bool):
+            return {"enabled": v}
+        if v is None:
+            return {}
+        return v
+
+
+def _finite_or_default(v: Any, default: float) -> float:
+    """Coerce blank/NaN/non-numeric UI values so PUT /settings does not 400."""
+    if v is None or v == "":
+        return default
+    try:
+        n = float(v)
+    except (TypeError, ValueError):
+        return default
+    if n != n or n <= 0:  # NaN / cleared number inputs from the UI
+        return default
+    return n
+
 
 class RiskConfig(BaseModel):
     max_position_pct: float = Field(default=10.0, ge=0.1, le=100.0)
     max_daily_loss_pct: float = Field(default=3.0, ge=0.1, le=100.0)
     max_order_value: float = Field(default=100_000.0, ge=1.0)
+
+    @field_validator("max_position_pct", mode="before")
+    @classmethod
+    def coerce_pos(cls, v: Any) -> Any:
+        return _finite_or_default(v, 10.0)
+
+    @field_validator("max_daily_loss_pct", mode="before")
+    @classmethod
+    def coerce_loss(cls, v: Any) -> Any:
+        return _finite_or_default(v, 3.0)
+
+    @field_validator("max_order_value", mode="before")
+    @classmethod
+    def coerce_order(cls, v: Any) -> Any:
+        return _finite_or_default(v, 100_000.0)
 
 
 class TradingConfig(BaseModel):
@@ -154,6 +201,16 @@ class TradingConfig(BaseModel):
     paper_backend: str = "local"  # local | alpaca
     # India default product for live tickets
     india_default_product: str = "CNC"  # CNC | MIS | NRML
+
+    @field_validator("risk", mode="before")
+    @classmethod
+    def coerce_risk(cls, v: Any) -> Any:
+        return v if isinstance(v, dict) else {}
+
+    @field_validator("paper_starting_cash", mode="before")
+    @classmethod
+    def coerce_cash(cls, v: Any) -> Any:
+        return _finite_or_default(v, 1_000_000.0)
 
 
 class NotifyChannelConfig(BaseModel):

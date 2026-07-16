@@ -75,6 +75,72 @@ type Tab =
   | "security"
   | "backup";
 
+function normalizeSettings(raw: Partial<SettingsData> | null | undefined): SettingsData {
+  const marketsIn = raw?.markets;
+  const cryptoIn =
+    marketsIn && typeof marketsIn.crypto === "object" && marketsIn.crypto
+      ? marketsIn.crypto
+      : { enabled: true, exchanges: ["binance"] as string[] };
+  const tradingIn = raw?.trading;
+  const riskIn = tradingIn?.risk;
+  const appearanceIn = raw?.appearance;
+  const nIn = raw?.notifications;
+  return {
+    llm: (raw?.llm as Record<string, unknown>) || {},
+    markets: {
+      stocks_global: marketsIn?.stocks_global !== false,
+      india: marketsIn?.india !== false,
+      crypto: {
+        enabled: cryptoIn.enabled !== false,
+        exchanges: Array.isArray(cryptoIn.exchanges) ? cryptoIn.exchanges : ["binance"],
+      },
+      quote_cache_ttl_s: marketsIn?.quote_cache_ttl_s ?? 30,
+    },
+    trading: {
+      mode: tradingIn?.mode || "paper",
+      kill_switch: Boolean(tradingIn?.kill_switch),
+      require_order_confirmation: tradingIn?.require_order_confirmation !== false,
+      risk: {
+        max_position_pct: Number.isFinite(riskIn?.max_position_pct) ? Number(riskIn?.max_position_pct) : 10,
+        max_daily_loss_pct: Number.isFinite(riskIn?.max_daily_loss_pct)
+          ? Number(riskIn?.max_daily_loss_pct)
+          : 3,
+        max_order_value: Number.isFinite(riskIn?.max_order_value)
+          ? Number(riskIn?.max_order_value)
+          : 100_000,
+      },
+      paper_starting_cash: tradingIn?.paper_starting_cash,
+      paper_currency: tradingIn?.paper_currency,
+      default_broker: tradingIn?.default_broker,
+      paper_backend: tradingIn?.paper_backend,
+      india_default_product: tradingIn?.india_default_product,
+    },
+    appearance: {
+      theme: appearanceIn?.theme || "dark",
+      base_currency: appearanceIn?.base_currency || "INR",
+      timezone: appearanceIn?.timezone || "Asia/Kolkata",
+      number_format: appearanceIn?.number_format || "indian",
+      locale: appearanceIn?.locale || "en-IN",
+    },
+    notifications: {
+      master_enabled: Boolean(nIn?.master_enabled),
+      events_alert: nIn?.events_alert,
+      events_job: nIn?.events_job,
+      events_order: nIn?.events_order,
+      events_system: nIn?.events_system,
+      quiet_hours_start: nIn?.quiet_hours_start,
+      quiet_hours_end: nIn?.quiet_hours_end,
+      mute_symbols: Array.isArray(nIn?.mute_symbols) ? nIn?.mute_symbols : [],
+      telegram: (nIn?.telegram as Record<string, unknown>) || {},
+      email: (nIn?.email as Record<string, unknown>) || {},
+      webhook: (nIn?.webhook as Record<string, unknown>) || {},
+      webpush: (nIn?.webpush as Record<string, unknown>) || {},
+      discord: (nIn?.discord as Record<string, unknown>) || {},
+      slack: (nIn?.slack as Record<string, unknown>) || {},
+    },
+  };
+}
+
 const BROKER_HELP: Record<string, { title: string; steps: string[]; link?: string }> = {
   zerodha: {
     title: "Connect Zerodha Kite (5 steps)",
@@ -131,34 +197,49 @@ export function SettingsPage() {
   const [smtpPass, setSmtpPass] = useState("");
   const [hookUrl, setHookUrl] = useState("");
   const [hookSecretName, setHookSecretName] = useState("NOTIFY_WEBHOOK_URL");
+  const [loadError, setLoadError] = useState("");
+  const [loading, setLoading] = useState(true);
 
   async function load() {
-    const res = await api<{
-      settings: SettingsData;
-      secrets: { name: string; masked: string }[];
-    }>("/api/settings");
-    setData(res.settings);
-    setSecrets(res.secrets || []);
+    setLoading(true);
+    setLoadError("");
     try {
-      const b = await api<{ brokers: Broker[] }>("/api/trading/brokers");
-      setBrokers(b.brokers);
-    } catch {
-      /* ignore */
+      const res = await api<{
+        settings: SettingsData;
+        secrets: { name: string; masked: string }[];
+      }>("/api/settings");
+      setData(normalizeSettings(res.settings));
+      setSecrets(res.secrets || []);
+      try {
+        const b = await api<{ brokers: Broker[] }>("/api/trading/brokers");
+        setBrokers(b.brokers || []);
+      } catch {
+        /* ignore */
+      }
+    } catch (e) {
+      setData(null);
+      setLoadError(e instanceof Error ? e.message : "Failed to load settings");
+    } finally {
+      setLoading(false);
     }
   }
 
   useEffect(() => {
-    load().catch((e) => setMsg(e.message));
+    void load();
   }, []);
 
   async function save(patch: Record<string, unknown>, needsReauth = false) {
     setMsg("");
-    await api("/api/settings", {
-      method: "PUT",
-      body: JSON.stringify({ settings: patch, reauth_password: needsReauth ? reauth : null }),
-    });
-    setMsg("Saved");
-    await load();
+    try {
+      await api("/api/settings", {
+        method: "PUT",
+        body: JSON.stringify({ settings: patch, reauth_password: needsReauth ? reauth || null : null }),
+      });
+      setMsg("Saved");
+      await load();
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : "Save failed");
+    }
   }
 
   async function storeSecret(name: string, value: string) {
@@ -166,17 +247,51 @@ export function SettingsPage() {
       setMsg("Enter your FinAgent password (re-auth) first — required to save secrets.");
       return;
     }
-    await api("/api/settings/secrets", {
-      method: "PUT",
-      body: JSON.stringify({ name, value, reauth_password: reauth }),
-    });
-    setMsg(`Saved ${name} (encrypted)`);
-    setBrokerSecretVal("");
-    setSecretValue("");
-    await load();
+    try {
+      await api("/api/settings/secrets", {
+        method: "PUT",
+        body: JSON.stringify({ name, value, reauth_password: reauth }),
+      });
+      setMsg(`Saved ${name} (encrypted)`);
+      setBrokerSecretVal("");
+      setSecretValue("");
+      await load();
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : "Failed to save secret");
+    }
   }
 
-  if (!data) return <p className="text-sm text-muted-foreground">Loading settings…</p>;
+  if (!data) {
+    return (
+      <div className="space-y-4 max-w-lg">
+        <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
+        <p className="text-sm text-muted-foreground">
+          {loading ? "Loading settings…" : "Could not load settings"}
+        </p>
+        {loadError && <p className="text-sm text-amber-200 whitespace-pre-wrap">{loadError}</p>}
+        {!loading && (
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" onClick={() => void load()}>
+              Retry
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setApiBase("");
+                setServerUrl("");
+                setMsg("Cleared API server URL — retrying…");
+                void load();
+              }}
+            >
+              Clear API base & retry
+            </Button>
+          </div>
+        )}
+        {msg && <p className="text-sm text-muted-foreground">{msg}</p>}
+      </div>
+    );
+  }
 
   const tabs: { id: Tab; label: string }[] = [
     { id: "ai", label: "AI / LLMs" },
@@ -261,11 +376,18 @@ export function SettingsPage() {
             <label className="flex items-center gap-2 text-sm">
               <input
                 type="checkbox"
-                checked={data.markets.crypto.enabled}
+                checked={Boolean(data.markets?.crypto?.enabled)}
                 onChange={(e) =>
                   setData({
                     ...data,
-                    markets: { ...data.markets, crypto: { ...data.markets.crypto, enabled: e.target.checked } },
+                    markets: {
+                      ...data.markets,
+                      crypto: {
+                        exchanges: data.markets?.crypto?.exchanges || ["binance"],
+                        ...data.markets?.crypto,
+                        enabled: e.target.checked,
+                      },
+                    },
                   })
                 }
               />
@@ -356,13 +478,17 @@ export function SettingsPage() {
                 <Label>Max position %</Label>
                 <Input
                   type="number"
-                  value={data.trading.risk.max_position_pct}
+                  value={data.trading.risk?.max_position_pct ?? 10}
                   onChange={(e) =>
                     setData({
                       ...data,
                       trading: {
                         ...data.trading,
-                        risk: { ...data.trading.risk, max_position_pct: Number(e.target.value) },
+                        risk: {
+                          max_daily_loss_pct: data.trading.risk?.max_daily_loss_pct ?? 3,
+                          max_order_value: data.trading.risk?.max_order_value ?? 100_000,
+                          max_position_pct: Number(e.target.value),
+                        },
                       },
                     })
                   }
@@ -372,13 +498,17 @@ export function SettingsPage() {
                 <Label>Max daily loss %</Label>
                 <Input
                   type="number"
-                  value={data.trading.risk.max_daily_loss_pct}
+                  value={data.trading.risk?.max_daily_loss_pct ?? 3}
                   onChange={(e) =>
                     setData({
                       ...data,
                       trading: {
                         ...data.trading,
-                        risk: { ...data.trading.risk, max_daily_loss_pct: Number(e.target.value) },
+                        risk: {
+                          max_position_pct: data.trading.risk?.max_position_pct ?? 10,
+                          max_order_value: data.trading.risk?.max_order_value ?? 100_000,
+                          max_daily_loss_pct: Number(e.target.value),
+                        },
                       },
                     })
                   }
@@ -388,13 +518,17 @@ export function SettingsPage() {
                 <Label>Max order value</Label>
                 <Input
                   type="number"
-                  value={data.trading.risk.max_order_value}
+                  value={data.trading.risk?.max_order_value ?? 100_000}
                   onChange={(e) =>
                     setData({
                       ...data,
                       trading: {
                         ...data.trading,
-                        risk: { ...data.trading.risk, max_order_value: Number(e.target.value) },
+                        risk: {
+                          max_position_pct: data.trading.risk?.max_position_pct ?? 10,
+                          max_daily_loss_pct: data.trading.risk?.max_daily_loss_pct ?? 3,
+                          max_order_value: Number(e.target.value),
+                        },
                       },
                     })
                   }
@@ -959,7 +1093,9 @@ export function SettingsPage() {
                 Test Web Push
               </Button>
             </div>
-            <Button onClick={() => save({ notifications: data.notifications })}>Save notification prefs</Button>
+            <Button onClick={() => void save({ notifications: data.notifications || n })}>
+              Save notification prefs
+            </Button>
           </CardContent>
         </Card>
       )}
@@ -1052,10 +1188,10 @@ export function SettingsPage() {
                 onClick={() => {
                   setApiBase("");
                   setServerUrl("");
-                  setMsg("Cleared");
+                  setMsg("Cleared API server URL (same-origin). Reload if the app was stuck on a bad host.");
                 }}
               >
-                Clear
+                Clear API base
               </Button>
             </div>
           </CardContent>
@@ -1118,8 +1254,12 @@ export function SettingsPage() {
               <Button
                 variant="destructive"
                 onClick={async () => {
-                  await save({ trading: { ...data.trading, kill_switch: true } }, false);
-                  setMsg("Panic Stop on — all orders blocked");
+                  try {
+                    await save({ trading: { ...data.trading, kill_switch: true } }, false);
+                    setMsg("Panic Stop on — all orders blocked");
+                  } catch (e) {
+                    setMsg(e instanceof Error ? e.message : "Panic Stop failed");
+                  }
                 }}
               >
                 Panic Stop now
@@ -1127,8 +1267,12 @@ export function SettingsPage() {
               <Button
                 variant="secondary"
                 onClick={async () => {
-                  const r = await api<{ items: Record<string, unknown>[] }>("/api/settings/audit");
-                  setAudit(r.items || []);
+                  try {
+                    const r = await api<{ items: Record<string, unknown>[] }>("/api/settings/audit");
+                    setAudit(r.items || []);
+                  } catch (e) {
+                    setMsg(e instanceof Error ? e.message : "Audit load failed");
+                  }
                 }}
               >
                 Refresh audit log

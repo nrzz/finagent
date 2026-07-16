@@ -99,26 +99,27 @@ export function LLMStudio({ compact = false, onActivated }: Props) {
   const load = useCallback(async (preferActive = false) => {
     const res = await api<{
       settings: {
-        llm: LLMBundle & { profiles: LLMProfile[] };
+        llm?: Partial<LLMBundle> & { profiles?: LLMProfile[] };
       };
       catalog: ProviderMeta[];
     }>("/api/settings");
-    setCatalog(res.catalog || []);
-    const llm = res.settings.llm;
+    setCatalog(Array.isArray(res.catalog) ? res.catalog : []);
+    const llm = res.settings?.llm || {};
+    const profiles = Array.isArray(llm.profiles) ? llm.profiles : [];
     setBundle({
-      profiles: llm.profiles || [],
-      active_profile_id: llm.active_profile_id,
-      fallback_profile_id: llm.fallback_profile_id,
-      chat_profile_id: llm.chat_profile_id,
-      analysis_profile_id: llm.analysis_profile_id,
+      profiles,
+      active_profile_id: llm.active_profile_id ?? null,
+      fallback_profile_id: llm.fallback_profile_id ?? null,
+      chat_profile_id: llm.chat_profile_id ?? null,
+      analysis_profile_id: llm.analysis_profile_id ?? null,
     });
+    setStatus("");
     if (preferActive) {
-      const active =
-        (llm.profiles || []).find((p) => p.id === llm.active_profile_id) || llm.profiles?.[0];
+      const active = profiles.find((p) => p.id === llm.active_profile_id) || profiles[0];
       if (active) {
-        setProviderId(active.provider);
-        setName(active.name);
-        setModel(active.model);
+        setProviderId(active.provider || "demo");
+        setName(active.name || "My LLM");
+        setModel(active.model || "demo");
         setBaseUrl(active.base_url || "");
         setEditId(active.id);
       }
@@ -126,7 +127,10 @@ export function LLMStudio({ compact = false, onActivated }: Props) {
   }, []);
 
   useEffect(() => {
-    load(true).catch((e) => setStatus(e instanceof Error ? e.message : "Failed to load"));
+    load(true).catch((e) => {
+      setBundle(null);
+      setStatus(e instanceof Error ? e.message : "Failed to load AI studio");
+    });
   }, [load]);
 
   // Silent Ollama auto-detect on mount (wizard + settings share this component)
@@ -166,7 +170,7 @@ export function LLMStudio({ compact = false, onActivated }: Props) {
     setApiKey("");
     setStatus("");
     if (!meta) return;
-    setName(meta.name);
+    setName(meta.name || id);
     setBaseUrl(meta.default_base_url || "");
     if (id === "ollama" && ollamaDetected.online && ollamaDetected.models.length) {
       setDetected(ollamaDetected.models);
@@ -184,7 +188,7 @@ export function LLMStudio({ compact = false, onActivated }: Props) {
       return;
     }
     setDetected(id === "ollama" ? ollamaDetected.models : []);
-    const preset = meta.presets[0];
+    const preset = (meta.presets || [])[0];
     setModel(preset?.model || (id === "demo" ? "demo" : ""));
     if (preset?.pull) setPullModel(preset.pull);
     if (id === "ollama" && !ollamaDetected.online) {
@@ -201,13 +205,13 @@ export function LLMStudio({ compact = false, onActivated }: Props) {
         "/api/settings/llm/activate",
         { method: "POST", body: JSON.stringify({ profile_id: demo.id, role: "fallback" }) },
       );
-      const llm = res.settings.llm;
+      const llm = res.settings?.llm || {};
       setBundle({
-        profiles: llm.profiles,
-        active_profile_id: llm.active_profile_id,
-        fallback_profile_id: llm.fallback_profile_id,
-        chat_profile_id: llm.chat_profile_id,
-        analysis_profile_id: llm.analysis_profile_id,
+        profiles: Array.isArray(llm.profiles) ? llm.profiles : [],
+        active_profile_id: llm.active_profile_id ?? null,
+        fallback_profile_id: llm.fallback_profile_id ?? null,
+        chat_profile_id: llm.chat_profile_id ?? null,
+        analysis_profile_id: llm.analysis_profile_id ?? null,
       });
     } catch {
       /* non-fatal */
@@ -246,16 +250,17 @@ export function LLMStudio({ compact = false, onActivated }: Props) {
       setApiKey("");
       if (overrides?.model) setModel(overrides.model);
       if (overrides?.name) setName(overrides.name);
-      const llm = res.settings.llm;
+      const llm = res.settings?.llm || {};
+      const profiles = Array.isArray(llm.profiles) ? llm.profiles : [];
       setBundle({
-        profiles: llm.profiles,
-        active_profile_id: llm.active_profile_id,
-        fallback_profile_id: llm.fallback_profile_id,
-        chat_profile_id: llm.chat_profile_id,
-        analysis_profile_id: llm.analysis_profile_id,
+        profiles,
+        active_profile_id: llm.active_profile_id ?? null,
+        fallback_profile_id: llm.fallback_profile_id ?? null,
+        chat_profile_id: llm.chat_profile_id ?? null,
+        analysis_profile_id: llm.analysis_profile_id ?? null,
       });
       if (makeActive && providerId !== "demo") {
-        await ensureDemoFallback(llm.profiles, llm.fallback_profile_id);
+        await ensureDemoFallback(profiles, llm.fallback_profile_id ?? null);
       }
       setStatus(makeActive ? `Active: ${res.profile.name} (${res.profile.model})` : `Saved ${res.profile.name}`);
       onActivated?.(res.profile);
@@ -585,13 +590,13 @@ export function LLMStudio({ compact = false, onActivated }: Props) {
         "/api/settings/llm/activate",
         { method: "POST", body: JSON.stringify({ profile_id: profileId, role }) },
       );
-      const llm = res.settings.llm;
+      const llm = res.settings?.llm || {};
       setBundle({
-        profiles: llm.profiles,
-        active_profile_id: llm.active_profile_id,
-        fallback_profile_id: llm.fallback_profile_id,
-        chat_profile_id: llm.chat_profile_id,
-        analysis_profile_id: llm.analysis_profile_id,
+        profiles: Array.isArray(llm.profiles) ? llm.profiles : [],
+        active_profile_id: llm.active_profile_id ?? null,
+        fallback_profile_id: llm.fallback_profile_id ?? null,
+        chat_profile_id: llm.chat_profile_id ?? null,
+        analysis_profile_id: llm.analysis_profile_id ?? null,
       });
       setStatus(`Set ${role} → ${profileId}`);
     } catch (e) {
@@ -617,7 +622,28 @@ export function LLMStudio({ compact = false, onActivated }: Props) {
   }
 
   if (!bundle) {
-    return <p className="text-sm text-muted-foreground">Loading AI studio…</p>;
+    return (
+      <div className="space-y-3 rounded-lg border border-border p-4">
+        <p className="text-sm text-muted-foreground">
+          {status ? "Could not load AI studio" : "Loading AI studio…"}
+        </p>
+        {status && <p className="text-sm text-amber-200 whitespace-pre-wrap">{status}</p>}
+        {status && (
+          <Button
+            type="button"
+            size="sm"
+            onClick={() => {
+              setStatus("");
+              load(true).catch((e) =>
+                setStatus(e instanceof Error ? e.message : "Failed to load AI studio"),
+              );
+            }}
+          >
+            Retry
+          </Button>
+        )}
+      </div>
+    );
   }
 
   return (
@@ -690,20 +716,22 @@ export function LLMStudio({ compact = false, onActivated }: Props) {
       {provider && (
         <Card className="overflow-hidden">
           <CardHeader className="pb-3 bg-gradient-to-br from-sky-500/10 via-transparent to-transparent">
-            <CardTitle className="text-base">{provider.install.title}</CardTitle>
+            <CardTitle className="text-base">
+              {provider.install?.title || provider.name || "Provider setup"}
+            </CardTitle>
             <p className="text-xs text-muted-foreground">{provider.tagline}</p>
           </CardHeader>
           <CardContent className="space-y-4">
             <ol className="space-y-2 text-sm text-muted-foreground list-decimal pl-4">
-              {provider.install.steps.map((step) => (
+              {(provider.install?.steps || []).map((step) => (
                 <li key={step} className="leading-relaxed">
                   {step}
                 </li>
               ))}
             </ol>
-            {provider.install.links.length > 0 && (
+            {(provider.install?.links || []).length > 0 && (
               <div className="flex flex-wrap gap-2">
-                {provider.install.links.map((link) => (
+                {(provider.install?.links || []).map((link) => (
                   <a
                     key={link.url}
                     href={link.url}
@@ -803,7 +831,7 @@ export function LLMStudio({ compact = false, onActivated }: Props) {
               </div>
             )}
 
-            {provider.presets.length > 0 && provider.id !== "demo" && (
+            {(provider.presets || []).length > 0 && provider.id !== "demo" && (
               <div className="space-y-2">
                 <Label>
                   {provider.id === "ollama"
@@ -811,7 +839,7 @@ export function LLMStudio({ compact = false, onActivated }: Props) {
                     : "Model presets"}
                 </Label>
                 <div className="flex flex-wrap gap-2">
-                  {provider.presets.map((preset) => {
+                  {(provider.presets || []).map((preset) => {
                     const pullName = preset.pull || preset.model;
                     const installed =
                       provider.id !== "ollama" ||
@@ -1051,10 +1079,10 @@ export function LLMStudio({ compact = false, onActivated }: Props) {
           </p>
         </CardHeader>
         <CardContent className="space-y-2">
-          {bundle.profiles.length === 0 && (
+          {(bundle.profiles || []).length === 0 && (
             <p className="text-sm text-muted-foreground">No profiles yet — pick a provider above.</p>
           )}
-          {bundle.profiles.map((p) => {
+          {(bundle.profiles || []).map((p) => {
             const roles: string[] = [];
             if (p.id === bundle.active_profile_id) roles.push("Active");
             if (p.id === bundle.fallback_profile_id) roles.push("Fallback");
