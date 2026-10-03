@@ -13,7 +13,7 @@ pip install -e ".[dev]"
 pre-commit install
 
 # Frontend
-cd frontend
+cd ../frontend
 npm install
 ```
 
@@ -26,7 +26,7 @@ ruff format --check src tests
 mypy src/finagent
 pytest --cov=finagent --cov-fail-under=70
 
-cd frontend
+cd ../frontend
 npm run typecheck
 npm run test
 npm run build
