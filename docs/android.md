@@ -3,7 +3,7 @@
 ## For everyone (no Android Studio)
 
 1. Run FinAgent on a PC (`START.bat`) and note the **Phone / APK** URL it prints.  
-2. Download **FinAgent-android.apk** from the project’s [GitHub Releases](../../releases) page.  
+2. Download **FinAgent-android.apk** from the project’s [GitHub Releases](https://github.com/nrzz/finagent/releases) page.  
 3. Install on the phone (allow “unknown apps” if asked).  
 4. Open the app → **Settings → Device / APK** → paste the PC URL → **Save**.
 
