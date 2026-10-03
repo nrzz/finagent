@@ -36,7 +36,9 @@ Manual APK-only build (no tag): GitHub → **Actions → Release → Run workflo
 
 ```bash
 cd frontend
-npm run build && npx cap sync android
+npm run build
+npx cap add android    # first time only: frontend/android is generated and gitignored
+npx cap sync android
 cd android && ./gradlew assembleRelease   # or assembleDebug
 ```
 
