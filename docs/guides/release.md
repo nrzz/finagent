@@ -6,7 +6,7 @@
 |------|---------|-----------------|
 | Run FinAgent | `START.bat` / Docker | No |
 | Phone browser | Open PC LAN URL from `START.bat` | No |
-| Phone app icon | Download **FinAgent-android.apk** from [GitHub Releases](../../releases) | **No** |
+| Phone app icon | Download **FinAgent-android.apk** from [GitHub Releases](https://github.com/nrzz/finagent/releases) | **No** |
 | Hack the Android project | `BUILD-APK.bat` | Yes |
 
 End users should **never** need Android Studio. The APK is a thin Capacitor shell; they point it at their own PC in **Settings → Device / APK**.

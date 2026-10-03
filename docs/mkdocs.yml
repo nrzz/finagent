@@ -1,6 +1,6 @@
 site_name: FinAgent Docs
 site_description: Self-hosted AI finance agent
-repo_url: https://github.com/YOUR_ORG/finagent
+repo_url: https://github.com/nrzz/finagent
 theme:
   name: material
   palette:
