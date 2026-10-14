@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
+from urllib.parse import parse_qsl
+
 import httpx
 import pytest
 
@@ -76,6 +79,34 @@ async def test_exchange_request_token_success(monkeypatch: pytest.MonkeyPatch) -
     out = await ZerodhaBroker().exchange_request_token("req-token")
     assert out["access_token"] == "acc-123"
     assert out["user"] == "AB1234"
+
+
+@pytest.mark.asyncio
+async def test_exchange_request_token_sends_the_kite_checksum_not_the_secret(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Kite Connect v3 signs POST /session/token with SHA-256(api_key + request_token + secret).
+
+    Zerodha's API dictates that checksum (a request signature, not password storage), and the
+    API secret itself must never be sent.
+    """
+    _patch_secrets(monkeypatch, {"ZERODHA_API_KEY": "key123", "ZERODHA_API_SECRET": "hush456"})
+    sent: dict[str, str] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent["body"] = request.content.decode()
+        return httpx.Response(
+            200, json={"status": "success", "data": {"access_token": "acc", "user_id": "AB1"}}
+        )
+
+    _patch_httpx(monkeypatch, handler)
+    await ZerodhaBroker().exchange_request_token("req789")
+    assert dict(parse_qsl(sent["body"])) == {
+        "api_key": "key123",
+        "request_token": "req789",
+        "checksum": hashlib.sha256(b"key123req789hush456").hexdigest(),
+    }
+    assert "hush456" not in sent["body"]
 
 
 @pytest.mark.asyncio
