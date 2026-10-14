@@ -10,6 +10,8 @@ services:
       FINAGENT_DATABASE_URL: sqlite+aiosqlite:////data/finagent.db
       FINAGENT_HOST: 0.0.0.0
       FINAGENT_PORT: 8000
+      # Allow the app to reach the optional ollama service below (see SECURITY.md first):
+      # FINAGENT_LLM_ALLOWED_HOSTS: ollama
     volumes:
       - finagent-data:/data
     restart: unless-stopped

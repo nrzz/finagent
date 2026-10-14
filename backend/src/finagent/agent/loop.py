@@ -25,6 +25,13 @@ Rules:
 
 AuditCallback = Callable[[str, dict[str, Any]], Awaitable[None]]
 
+# What the user sees when the LLM provider fails. The cause (it can carry URLs or response
+# bodies) goes to the server log and the audit trail, never into the HTTP response.
+PROVIDER_FAILED_MESSAGE = (
+    "Sorry — the AI provider failed. Open Settings → AI / LLMs and use Test connection, "
+    "or check the server log for details."
+)
+
 
 class AgentLoop:
     def __init__(self, audit: AuditCallback | None = None) -> None:
@@ -67,9 +74,12 @@ class AgentLoop:
                         iteration=iteration,
                         error=str(exc),
                     )
-                    msg = f"Sorry — the AI provider failed: {exc}"
                     await self._audit("agent_error", {"error": str(exc)})
-                    return {"content": msg, "tool_trace": tool_trace, "citations": citations}
+                    return {
+                        "content": PROVIDER_FAILED_MESSAGE,
+                        "tool_trace": tool_trace,
+                        "citations": citations,
+                    }
                 payload = parse_json_tool_payload(result.get("content") or "")
                 if not payload:
                     # Local models often ignore JSON instructions — rescue with intent router.
@@ -150,9 +160,12 @@ class AgentLoop:
                 result = await router.complete(messages, tools=TOOLS_SCHEMA)
             except Exception as exc:
                 log.error("llm_complete_failed", mode="native", iteration=iteration, error=str(exc))
-                msg = f"Sorry — the AI provider failed: {exc}"
                 await self._audit("agent_error", {"error": str(exc)})
-                return {"content": msg, "tool_trace": tool_trace, "citations": citations}
+                return {
+                    "content": PROVIDER_FAILED_MESSAGE,
+                    "tool_trace": tool_trace,
+                    "citations": citations,
+                }
             tool_calls = result.get("tool_calls") or []
             if not tool_calls:
                 content = result.get("content") or ""
@@ -235,10 +248,7 @@ class AgentLoop:
                         iteration=iteration,
                         error=str(exc),
                     )
-                    yield {
-                        "type": "error",
-                        "message": f"Sorry — the AI provider failed: {exc}",
-                    }
+                    yield {"type": "error", "message": PROVIDER_FAILED_MESSAGE}
                     yield {"type": "done"}
                     return
                 payload = parse_json_tool_payload(result.get("content") or "")
@@ -316,10 +326,7 @@ class AgentLoop:
                 result = await router.complete(messages, tools=TOOLS_SCHEMA)
             except Exception as exc:
                 log.error("llm_complete_failed", mode="native", iteration=iteration, error=str(exc))
-                yield {
-                    "type": "error",
-                    "message": f"Sorry — the AI provider failed: {exc}",
-                }
+                yield {"type": "error", "message": PROVIDER_FAILED_MESSAGE}
                 yield {"type": "done"}
                 return
             tool_calls = result.get("tool_calls") or []

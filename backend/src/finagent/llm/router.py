@@ -16,7 +16,9 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 
 from finagent.config import get_settings, resolve_api_key
 from finagent.config.schema import LLMProvider, ToolMode
+from finagent.llm.ollama_runtime import DEFAULT_OLLAMA_URL, ollama_base_url
 from finagent.logging_setup import get_logger
+from finagent.security.url_safety import validate_llm_base_url
 
 log = get_logger(__name__)
 
@@ -40,12 +42,47 @@ Not financial advice.
 """
 
 
+_FENCE = "```"
+
+
+def _fenced_json_object(text: str) -> str | None:
+    r"""Return the first ``{...}`` object inside a ``` / ```json fence, or None.
+
+    Same result as the regex ``` ```(?:json)?\s*(\{.*?\})\s*``` ``` (DOTALL: leftmost fence,
+    shortest object that is followed by a closing fence), but in linear time. The regex retried
+    every fence start and rescanned the rest of the text each time, which is quadratic on
+    model output such as "```{" repeated thousands of times.
+    """
+    n = len(text)
+    pos = text.find(_FENCE)
+    while pos != -1:
+        i = pos + len(_FENCE)
+        if text.startswith("json", i):
+            i += 4
+        while i < n and text[i].isspace():
+            i += 1
+        if i < n and text[i] == "{":
+            # First "}" followed, after optional whitespace, by the closing fence. If there is
+            # none, no later fence can have one either (its object would start further right).
+            close = text.find("}", i + 1)
+            while close != -1:
+                j = close + 1
+                while j < n and text[j].isspace():
+                    j += 1
+                if text.startswith(_FENCE, j):
+                    return text[i : close + 1]
+                close = text.find("}", close + 1)
+            return None
+        pos = text.find(_FENCE, pos + 1)
+    return None
+
+
 def parse_json_tool_payload(text: str) -> dict[str, Any] | None:
     text = text.strip()
     if not text:
         return None
-    fence = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
-    candidate = fence.group(1) if fence else text
+    fenced = _fenced_json_object(text)
+    candidate = fenced if fenced is not None else text
     start = candidate.find("{")
     end = candidate.rfind("}")
     if start < 0 or end < 0:
@@ -88,8 +125,13 @@ def _api_key_for(provider: LLMProvider, explicit_ref: str | None) -> str | None:
 
 
 def _endpoint(provider: LLMProvider, base_url: str | None) -> str:
+    """Base URL for ``provider``. A configured URL must pass the endpoint allow-list.
+
+    Raises ``ValueError`` for a URL that is not allowed, so no request is ever built from an
+    unchecked value (see ``finagent.security.url_safety``).
+    """
     if base_url:
-        return base_url.rstrip("/")
+        return validate_llm_base_url(base_url)
     defaults = {
         LLMProvider.OLLAMA: "http://localhost:11434",
         LLMProvider.OPENAI: "https://api.openai.com/v1",
@@ -592,7 +634,7 @@ class LLMRouter:
         client: httpx.AsyncClient,
         tools: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
-        base = _endpoint(self.settings.provider, self.settings.base_url).replace("/v1", "")
+        base = _endpoint(self.settings.provider, self.settings.base_url).removesuffix("/v1")
         # Preserve tool / assistant tool_call messages for multi-turn tool loops
         ollama_msgs: list[dict[str, Any]] = []
         for m in messages:
@@ -834,11 +876,22 @@ class LLMRouter:
         if provider == "demo":
             return {"ok": True, "status": "ready", "message": "Demo is always available"}
         url = base_url or (meta or {}).get("default_base_url") or ""
+        if not url:
+            url = {"ollama": DEFAULT_OLLAMA_URL, "anthropic": "https://api.anthropic.com"}.get(
+                provider, ""
+            )
+        if not url:
+            return {"ok": False, "status": "invalid", "message": "No endpoint URL configured"}
+        try:
+            # Every request below is built from this validated base URL plus a fixed path.
+            base = validate_llm_base_url(url)
+        except ValueError as exc:
+            return {"ok": False, "status": "blocked", "message": str(exc)}
         try:
             if provider == "ollama":
-                base = (url or "http://127.0.0.1:11434").replace("/v1", "").rstrip("/")
+                root = base.removesuffix("/v1")
                 async with httpx.AsyncClient(timeout=4.0) as client:
-                    resp = await client.get(f"{base}/api/tags")
+                    resp = await client.get(f"{root}/api/tags")
                     resp.raise_for_status()
                     models = [m.get("name") for m in resp.json().get("models", []) if m.get("name")]
                     return {
@@ -852,8 +905,9 @@ class LLMRouter:
             key = resolve_api_key(api_key_name or (meta or {}).get("secret_name"))
             if key:
                 headers["Authorization"] = f"Bearer {key}"
+            # Many providers already include /v1 in their base URL
+            models_url = f"{base}/models" if base.endswith("/v1") else f"{base}/v1/models"
             if provider == "anthropic":
-                base = (url or "https://api.anthropic.com").rstrip("/")
                 if key:
                     headers = {
                         "x-api-key": key,
@@ -861,19 +915,13 @@ class LLMRouter:
                         "Content-Type": "application/json",
                     }
                 async with httpx.AsyncClient(timeout=6.0) as client:
-                    # lightweight: list models not always available; ping with empty fails — just check TLS/host
-                    resp = await client.get(base, headers=headers)
+                    # Lightweight reachability check: any non-5xx answer means host + TLS work
+                    resp = await client.get(models_url, headers=headers)
                     return {
                         "ok": resp.status_code < 500,
                         "status": "reachable" if resp.status_code < 500 else "error",
                         "message": f"Anthropic reachable (HTTP {resp.status_code})",
                     }
-            base = url.rstrip("/")
-            if not base.endswith("/v1"):
-                # many providers already include /v1
-                models_url = f"{base}/models" if base.endswith("/v1") else f"{base}/v1/models"
-            else:
-                models_url = f"{base}/models"
             async with httpx.AsyncClient(timeout=8.0) as client:
                 resp = await client.get(models_url, headers=headers)
                 if resp.status_code >= 400:
@@ -905,11 +953,10 @@ class LLMRouter:
 
     async def pull_ollama_model(self, model: str, base_url: str | None = None) -> dict[str, Any]:
         """Ask local Ollama to pull a model (may take minutes)."""
-        base = (
-            (base_url or self.settings.base_url or "http://127.0.0.1:11434")
-            .replace("/v1", "")
-            .rstrip("/")
-        )
+        try:
+            base = ollama_base_url(base_url or self.settings.base_url)
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
         try:
             async with httpx.AsyncClient(timeout=httpx.Timeout(1800.0)) as client:
                 resp = await client.post(f"{base}/api/pull", json={"name": model, "stream": False})
@@ -924,8 +971,8 @@ class LLMRouter:
             }
 
     async def list_ollama_models(self) -> list[str]:
-        base = _endpoint(LLMProvider.OLLAMA, self.settings.base_url).replace("/v1", "")
         try:
+            base = _endpoint(LLMProvider.OLLAMA, self.settings.base_url).removesuffix("/v1")
             async with httpx.AsyncClient(timeout=5.0) as client:
                 resp = await client.get(f"{base}/api/tags")
                 resp.raise_for_status()
