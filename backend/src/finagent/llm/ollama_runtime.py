@@ -7,12 +7,21 @@ from typing import Any
 import httpx
 
 from finagent.logging_setup import get_logger
+from finagent.security.url_safety import validate_llm_base_url
 
 log = get_logger(__name__)
 
+DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434"
 
-def _base(url: str | None) -> str:
-    return (url or "http://127.0.0.1:11434").replace("/v1", "").rstrip("/")
+
+def ollama_base_url(url: str | None) -> str:
+    """Validated Ollama root URL (no ``/v1`` suffix) for the native ``/api/*`` endpoints.
+
+    Every Ollama request is built from this value plus a fixed path. Raises ``ValueError`` when
+    ``url`` is not an allowed LLM endpoint (see ``finagent.security.url_safety``).
+    """
+    base = validate_llm_base_url(url) if url else DEFAULT_OLLAMA_URL
+    return base.removesuffix("/v1")
 
 
 def _names_match(a: str, b: str) -> bool:
@@ -25,7 +34,7 @@ def _names_match(a: str, b: str) -> bool:
 
 async def list_loaded_models(base_url: str | None = None) -> list[dict[str, Any]]:
     """Return models currently loaded in Ollama memory (GET /api/ps)."""
-    base = _base(base_url)
+    base = ollama_base_url(base_url)
     try:
         async with httpx.AsyncClient(timeout=8.0) as client:
             resp = await client.get(f"{base}/api/ps")
@@ -51,7 +60,7 @@ async def list_loaded_models(base_url: str | None = None) -> list[dict[str, Any]
 
 async def unload_model(model: str, base_url: str | None = None) -> bool:
     """Unload a model from Ollama RAM (keep_alive=0)."""
-    base = _base(base_url)
+    base = ollama_base_url(base_url)
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
             # Official unload: generate/chat with keep_alive 0
@@ -100,7 +109,7 @@ async def ensure_exclusive_model(
 
     warmed = False
     if warm and model:
-        base = _base(base_url)
+        base = ollama_base_url(base_url)
         try:
             async with httpx.AsyncClient(timeout=120.0) as client:
                 resp = await client.post(

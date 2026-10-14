@@ -33,6 +33,9 @@ class EnvSettings(BaseSettings):
     )
     cors_origins: str = Field(default="*", alias="FINAGENT_CORS_ORIGINS")
     log_level: str = Field(default="INFO", alias="FINAGENT_LOG_LEVEL")
+    # Comma-separated extra hosts LLM endpoints may use (LAN box, Docker service, own proxy).
+    # Default empty = localhost + known HTTPS cloud providers only. See SECURITY.md.
+    llm_allowed_hosts: str = Field(default="", alias="FINAGENT_LLM_ALLOWED_HOSTS")
 
 
 @lru_cache

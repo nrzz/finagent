@@ -22,8 +22,11 @@ from finagent.db import get_db
 from finagent.db.models import AuditLog, SecretRow, SettingsRow, User
 from finagent.llm import get_llm_router
 from finagent.llm.catalog import get_catalog, get_provider
+from finagent.logging_setup import get_logger
 from finagent.security import encrypt_secret, mask_secret
 from finagent.security.store import cache_secret
+
+log = get_logger(__name__)
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
@@ -45,6 +48,23 @@ async def _exclusive_ollama_for_profile(profile: LLMProfile) -> dict[str, Any] |
         )
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
+
+
+def _reject_blocked_llm_urls(new: AppSettings, previous: AppSettings) -> None:
+    """400 if a new or changed LLM profile points at an endpoint that is not allowed.
+
+    Unchanged profiles are skipped so an endpoint saved before the allow-list existed cannot
+    block unrelated settings updates (the router still refuses to use it, see ``url_safety``).
+    """
+    from finagent.security.url_safety import assert_llm_base_url
+
+    old_urls = {p.id: p.base_url for p in previous.llm.profiles}
+    for profile in new.llm.profiles:
+        if profile.base_url and profile.base_url != old_urls.get(profile.id):
+            try:
+                assert_llm_base_url(profile.base_url)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=f"{profile.name}: {exc}") from exc
 
 
 class SettingsUpdate(BaseModel):
@@ -262,6 +282,7 @@ async def update_settings(
                 parts.append(f"{loc}: {err.get('msg', 'invalid')}" if loc else str(err.get("msg")))
             raise HTTPException(status_code=400, detail="; ".join(parts) or str(exc)) from exc
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    _reject_blocked_llm_urls(new_settings, current)
 
     sensitive = False
     kill_on_only = False
@@ -353,6 +374,7 @@ async def complete_wizard(
         ]
         new_settings.llm.active_profile_id = pid
     new_settings.llm.sync_legacy_from_active()
+    _reject_blocked_llm_urls(new_settings, current)
     await _persist(db, new_settings, user, "wizard_complete")
     return {"ok": True, "settings": new_settings.public_dict()}
 
@@ -552,8 +574,24 @@ async def pull_ollama(body: PullIn, user: User = Depends(get_current_user)) -> d
             "error": job.progress.error or "Pull failed",
             "hint": "Is Ollama running? Install from https://ollama.com/download then retry.",
         }
-    except RuntimeError as exc:
-        return {"ok": False, "error": str(exc)}
+    except pull_jobs.PullBusyError:
+        busy = pull_jobs.active_job()
+        return {
+            "ok": False,
+            "error": (
+                f"Only one install at a time. “{busy.model}” is installing — cancel it or wait."
+                if busy
+                else "Only one install at a time. Cancel the running install or wait for it."
+            ),
+        }
+    except pull_jobs.OllamaOfflineError:
+        return {
+            "ok": False,
+            "error": "Ollama is offline. Install from https://ollama.com/download and start it.",
+        }
+    except RuntimeError:
+        log.exception("ollama_pull_failed", model=body.model)
+        return {"ok": False, "error": "Model install failed. See the server log for details."}
 
 
 @router.get("/llm/ollama/pull/status")

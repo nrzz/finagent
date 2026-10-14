@@ -11,9 +11,18 @@ from typing import Any
 
 import httpx
 
+from finagent.llm.ollama_runtime import ollama_base_url
 from finagent.logging_setup import get_logger
 
 log = get_logger(__name__)
+
+
+class PullBusyError(RuntimeError):
+    """Another model install is already running (only one at a time)."""
+
+
+class OllamaOfflineError(RuntimeError):
+    """Ollama did not answer at the configured endpoint."""
 
 
 @dataclass
@@ -68,8 +77,7 @@ _ACTIVE_OTHER: str | None = None
 
 
 def _normalize_base(base_url: str | None) -> str:
-    base = (base_url or "http://127.0.0.1:11434").replace("/v1", "").rstrip("/")
-    return base
+    return ollama_base_url(base_url)
 
 
 def get_job(model: str) -> PullJob | None:
@@ -283,7 +291,7 @@ async def start_or_attach(
         other = active_job()
         if other and other.model != model:
             if not replace:
-                raise RuntimeError(
+                raise PullBusyError(
                     f"Only one install at a time. “{other.model}” is installing — "
                     "cancel it, switch to an installed model, or pass replace=true."
                 )
@@ -308,7 +316,9 @@ async def start_or_attach(
             return existing, True
         other2 = active_job()
         if other2 and other2.model != model:
-            raise RuntimeError(f"Only one install at a time. “{other2.model}” is still installing.")
+            raise PullBusyError(
+                f"Only one install at a time. “{other2.model}” is still installing."
+            )
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
                 resp = await client.get(f"{base}/api/tags")
@@ -330,7 +340,7 @@ async def start_or_attach(
                     _jobs[model] = job
                     return job, False
         except httpx.ConnectError as exc:
-            raise RuntimeError(
+            raise OllamaOfflineError(
                 "Ollama is offline. Install from https://ollama.com/download and start it."
             ) from exc
         except Exception:

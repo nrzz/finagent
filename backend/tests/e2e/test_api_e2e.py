@@ -846,3 +846,205 @@ def test_tax_lots_csv(client: TestClient, auth: dict[str, str]) -> None:
     r = client.get("/api/portfolio/tax-lots.csv", headers=auth)
     assert r.status_code == 200
     assert "symbol" in r.text.splitlines()[0]
+
+
+# --- SSRF allow-list for LLM endpoints (py/full-ssrf) ---------------------------------------
+
+UNLISTED_LLM_URL = "http://10.0.0.5:11434"
+
+
+def test_llm_probe_blocks_internal_endpoints(client: TestClient, auth: dict[str, str]) -> None:
+    r = client.post(
+        "/api/settings/llm/probe",
+        headers=auth,
+        json={"provider": "anthropic", "base_url": "http://169.254.169.254/latest/meta-data"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is False
+    assert body["status"] == "blocked"
+    listed = client.post(
+        "/api/settings/llm/models",
+        headers=auth,
+        json={"provider": "openai-compatible", "base_url": UNLISTED_LLM_URL},
+    )
+    assert listed.status_code == 200
+    assert listed.json() == {"models": []}
+
+
+def test_ollama_endpoints_reject_unlisted_base_url(
+    client: TestClient, auth: dict[str, str]
+) -> None:
+    responses = [
+        client.post(
+            "/api/settings/llm/ollama/exclusive",
+            headers=auth,
+            json={"model": "qwen2.5:3b", "base_url": UNLISTED_LLM_URL},
+        ),
+        client.get(
+            "/api/settings/llm/ollama/ps", headers=auth, params={"base_url": UNLISTED_LLM_URL}
+        ),
+        client.post(
+            "/api/settings/llm/ollama/pull/stream",
+            headers=auth,
+            json={"model": "qwen2.5:3b", "base_url": UNLISTED_LLM_URL},
+        ),
+        client.post(
+            "/api/settings/llm/ollama/pull",
+            headers=auth,
+            json={"model": "qwen2.5:3b", "base_url": UNLISTED_LLM_URL},
+        ),
+    ]
+    for r in responses:
+        assert r.status_code == 400, r.text
+        assert "FINAGENT_LLM_ALLOWED_HOSTS" in r.json()["detail"]
+
+
+def test_settings_reject_unlisted_llm_endpoint(client: TestClient, auth: dict[str, str]) -> None:
+    before = client.get("/api/settings", headers=auth).json()["settings"]["llm"]
+    put = client.put(
+        "/api/settings",
+        headers=auth,
+        json={
+            "settings": {
+                "llm": {
+                    "provider": "openai-compatible",
+                    "model": "local-model",
+                    "base_url": "http://10.0.0.5:1234/v1",
+                }
+            }
+        },
+    )
+    assert put.status_code == 400, put.text
+    assert "FINAGENT_LLM_ALLOWED_HOSTS" in put.json()["detail"]
+
+    profile = client.post(
+        "/api/settings/llm/profiles",
+        headers=auth,
+        json={
+            "name": "LAN box",
+            "provider": "openai-compatible",
+            "model": "local-model",
+            "base_url": "http://10.0.0.5:1234/v1",
+        },
+    )
+    assert profile.status_code == 400, profile.text
+
+    after = client.get("/api/settings", headers=auth).json()["settings"]["llm"]
+    assert after["base_url"] == before["base_url"]
+    assert [p["id"] for p in after["profiles"]] == [p["id"] for p in before["profiles"]]
+
+
+# --- exception text stays out of HTTP responses (py/stack-trace-exposure) --------------------
+
+
+def test_health_ready_hides_error_details(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import finagent.db as db_module
+
+    def broken_factory():  # type: ignore[no-untyped-def]
+        raise RuntimeError("cannot open /var/lib/finagent-secret/finagent.db")
+
+    monkeypatch.setattr(db_module, "get_session_factory", broken_factory)
+    r = client.get("/api/health/ready")
+    assert r.status_code == 503
+    assert r.json()["checks"]["database"] == "error"
+    assert "finagent-secret" not in r.text
+    assert "RuntimeError" not in r.text
+
+
+def test_portfolio_quote_failure_is_generic(
+    client: TestClient, auth: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import finagent.api.market as market_module
+
+    added = client.post(
+        "/api/portfolio/holdings",
+        headers=auth,
+        json={"symbol": "ERRCHECK.NS", "quantity": "1", "avg_cost": "10"},
+    )
+    assert added.status_code == 200, added.text
+
+    class BrokenRegistry:
+        async def get_quote(self, symbol: str):  # type: ignore[no-untyped-def]
+            raise RuntimeError("upstream said key=abc123 at /home/user/.cache/finagent")
+
+    monkeypatch.setattr(market_module, "get_market_registry", lambda: BrokenRegistry())
+    r = client.get("/api/portfolio", headers=auth)
+    assert r.status_code == 200
+    rows = [h for h in r.json()["holdings"] if h["symbol"] == "ERRCHECK.NS"]
+    assert rows
+    assert all(h["error"] == "Quote unavailable" for h in rows)
+    assert "abc123" not in r.text
+    assert ".cache" not in r.text
+
+
+def test_csv_import_skip_reason_is_generic(client: TestClient, auth: dict[str, str]) -> None:
+    csv_body = "symbol,quantity,avg_cost\nBADQTY.NS,not-a-number,100\nGOODQTY.NS,1,100\n"
+    files = {"file": ("holdings.csv", io.BytesIO(csv_body.encode()), "text/csv")}
+    r = client.post("/api/portfolio/import-csv", headers=auth, files=files)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["imported"] == 1
+    assert body["skipped"] == ["BADQTY.NS: invalid quantity or cost"]
+    assert "Invalid decimal" not in r.text
+
+
+def test_chat_stream_error_event_is_generic(
+    client: TestClient, auth: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import json
+
+    import finagent.api.chat as chat_module
+
+    class BrokenAgent:
+        def __init__(self, audit=None):  # type: ignore[no-untyped-def]
+            pass
+
+        async def stream_events(self, message, history):  # type: ignore[no-untyped-def]
+            raise RuntimeError("boom: postgres://user:pw@10.0.0.9/db")
+            yield {}  # makes this an async generator
+
+    monkeypatch.setattr(chat_module, "AgentLoop", BrokenAgent)
+    r = client.post("/api/chat/stream", headers=auth, json={"message": "hi", "history": []})
+    assert r.status_code == 200
+    events = [json.loads(p[5:]) for p in r.text.split("\n\n") if p.startswith("data:")]
+    assert events[0] == {"type": "error", "message": chat_module.CHAT_FAILED_MESSAGE}
+    assert events[-1] == {"type": "done"}
+    assert "postgres" not in r.text
+
+
+def test_blocking_ollama_pull_errors_are_generic(
+    client: TestClient, auth: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from finagent.llm import pull_jobs
+
+    def failing(exc: Exception):  # type: ignore[no-untyped-def]
+        async def start_or_attach(model, base_url=None, *, replace=False):  # type: ignore[no-untyped-def]
+            raise exc
+
+        return start_or_attach
+
+    body = {"model": "qwen2.5:3b"}
+    monkeypatch.setattr(
+        pull_jobs, "start_or_attach", failing(pull_jobs.PullBusyError("internal busy detail"))
+    )
+    busy = client.post("/api/settings/llm/ollama/pull", headers=auth, json=body).json()
+    assert busy["ok"] is False
+    assert busy["error"].startswith("Only one install at a time")
+    assert "internal busy detail" not in str(busy)
+
+    monkeypatch.setattr(
+        pull_jobs, "start_or_attach", failing(pull_jobs.OllamaOfflineError("secret socket info"))
+    )
+    offline = client.post("/api/settings/llm/ollama/pull", headers=auth, json=body).json()
+    assert offline["error"].startswith("Ollama is offline")
+    assert "secret socket info" not in str(offline)
+
+    monkeypatch.setattr(pull_jobs, "start_or_attach", failing(RuntimeError("/srv/ollama/secret")))
+    broken = client.post("/api/settings/llm/ollama/pull", headers=auth, json=body).json()
+    assert broken == {
+        "ok": False,
+        "error": "Model install failed. See the server log for details.",
+    }

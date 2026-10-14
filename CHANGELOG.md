@@ -19,6 +19,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Nav label **Trade** (replaces separate Markets page flow); F&O lives under `/trading?mode=fno`
 - Playwright A–Z desk smoke (tests 05–07) and mobile nav paths
 
+### Security
+
+- LLM endpoints are checked against an allow-list (localhost, the known HTTPS cloud providers, hosts in `FINAGENT_LLM_ALLOWED_HOSTS`) and every probe, model list, Ollama call and chat request is built from the validated base URL (code scanning `py/full-ssrf`). **Upgrade note:** a model server on a LAN host, in Docker or behind your own proxy now needs `FINAGENT_LLM_ALLOWED_HOSTS`, see `SECURITY.md`; Ollama / LM Studio on localhost are unaffected
+- Fenced JSON in model output is parsed in linear time (code scanning `py/polynomial-redos`)
+- Readiness checks, the chat stream, provider failures, portfolio quotes, CSV import and Ollama installs log exception details server-side instead of returning them in HTTP responses (code scanning `py/stack-trace-exposure`)
+
 ## [0.2.0] — 2026-07-15
 
 ### Added

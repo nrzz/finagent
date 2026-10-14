@@ -27,12 +27,15 @@ from finagent.db.models import (
     User,
     WatchlistItem,
 )
+from finagent.logging_setup import get_logger
 from finagent.portfolio import allocation_weights
 from finagent.portfolio.money import D
 from finagent.portfolio.pnl import Lot, apply_split, avg_cost, xirr
 from finagent.scheduler import add_alert, add_job, delete_job, list_alerts, list_jobs, toggle_job
 from finagent.trading import black_scholes_greeks, estimate_margin, get_paper_broker, lot_size
 from finagent.trading.persist import save_paper_to_db
+
+log = get_logger(__name__)
 
 router = APIRouter(prefix="/api", tags=["market"])
 
@@ -208,13 +211,15 @@ async def portfolio(
                 }
             )
         except Exception as exc:
+            # The cause goes to the server log; the response only says the quote is missing
+            log.warning("holding_quote_failed", symbol=r.symbol, error=str(exc))
             holdings_out.append(
                 {
                     "id": r.id,
                     "symbol": r.symbol,
                     "quantity": r.quantity,
                     "avg_cost": r.avg_cost,
-                    "error": str(exc),
+                    "error": "Quote unavailable",
                 }
             )
     paper_positions = paper.positions_snapshot(
@@ -290,8 +295,8 @@ async def import_csv(
                 )
             )
             count += 1
-        except ValueError as exc:
-            skipped.append(f"{symbol}: {exc}")
+        except ValueError:
+            skipped.append(f"{symbol}: invalid quantity or cost")
     db.add(
         AuditLog(
             actor=user.username,

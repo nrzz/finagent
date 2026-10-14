@@ -133,13 +133,16 @@ def create_app() -> FastAPI:
             async with get_session_factory()() as session:
                 await session.execute(text("SELECT 1"))
             checks["database"] = "ok"
-        except Exception as exc:
-            checks["database"] = f"error: {exc}"
+        except Exception:
+            # Cause goes to the server log, not into the (unauthenticated) response
+            log.exception("readiness_check_failed", check="database")
+            checks["database"] = "error"
         try:
             sched = get_scheduler()
             checks["scheduler"] = "ok" if sched and sched.running else "stopped"
-        except Exception as exc:
-            checks["scheduler"] = f"error: {exc}"
+        except Exception:
+            log.exception("readiness_check_failed", check="scheduler")
+            checks["scheduler"] = "error"
         ok = checks.get("database") == "ok" and checks.get("scheduler") == "ok"
         payload = {
             "status": "ready" if ok else "degraded",

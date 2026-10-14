@@ -15,8 +15,14 @@ from finagent.agent import AgentLoop
 from finagent.api.auth import get_current_user
 from finagent.db import get_db
 from finagent.db.models import AuditLog, ChatMessage, User
+from finagent.logging_setup import get_logger
+
+log = get_logger(__name__)
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
+
+# What the client sees when a chat stream breaks; the cause is logged server-side only.
+CHAT_FAILED_MESSAGE = "Chat failed. See the server log for details."
 
 
 class ChatRequest(BaseModel):
@@ -111,8 +117,9 @@ async def chat_stream(
             )
             await db.commit()
             yield 'data: {"type":"done"}\n\n'
-        except Exception as exc:
-            yield f"data: {json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
+        except Exception:
+            log.exception("chat_stream_failed")
+            yield f"data: {json.dumps({'type': 'error', 'message': CHAT_FAILED_MESSAGE})}\n\n"
             yield 'data: {"type":"done"}\n\n'
 
     return StreamingResponse(event_gen(), media_type="text/event-stream")
