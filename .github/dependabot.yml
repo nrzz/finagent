@@ -8,6 +8,14 @@ updates:
       backend-dependencies:
         patterns:
           - "*"
+    ignore:
+      # passlib 1.7.4 works only with bcrypt 4.0.x: 4.1 removed __about__ and
+      # 5 rejects the 255-byte secret of passlib's backend self-test, so every
+      # legacy bcrypt hash would fail to verify (tests/unit/test_legacy_bcrypt.py).
+      # Remove this when passlib is replaced (DECISIONS.md, 2026-11-19).
+      - dependency-name: bcrypt
+        versions: [">= 4.1"]
+
   - package-ecosystem: npm
     directory: "/frontend"
     schedule:
@@ -16,6 +24,16 @@ updates:
       frontend-dependencies:
         patterns:
           - "*"
+    ignore:
+      # The major updates (React 19, Tailwind 4, Vite 8 with plugin-react 6,
+      # vitest 5 and vite-plugin-pwa 2, Capacitor 8, lightweight-charts 5,
+      # lucide-react 1, tailwind-merge 3, eslint 10) are one migration, to be
+      # done on its own; in one group they made #23 red. Minor and patch
+      # updates keep coming. TypeScript 7 also waits for openapi-typescript,
+      # whose peer range is typescript ^5.x (DECISIONS.md, 2026-11-19).
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
